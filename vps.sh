@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # =============================
-# Enhanced Multi-VM Manager
+# Enhanced Multi-VM Manager (IDX Edition)
 # =============================
 
 # Function to display header
@@ -10,10 +10,12 @@ display_header() {
     clear
     cat << "EOF"
 ========================================================================
-Sponsor By These Guys!                                                                  
+Sponsor By These Guys!                                                  
 HOPINGBOYZ
 Jishnu
 NotGamerPie
+------------------------------------------------------------------------
+FIREBASE IDX EDITION
 ========================================================================
 EOF
     echo
@@ -87,7 +89,7 @@ check_dependencies() {
     
     if [ ${#missing_deps[@]} -ne 0 ]; then
         print_status "ERROR" "Missing dependencies: ${missing_deps[*]}"
-        print_status "INFO" "On Ubuntu/Debian, try: sudo apt install qemu-system cloud-image-utils wget"
+        print_status "INFO" "In Firebase IDX, add 'pkgs.qemu', 'pkgs.cloud-utils', and 'pkgs.cdrkit' to your .idx/dev.nix file and rebuild."
         exit 1
     fi
 }
@@ -333,7 +335,7 @@ local-hostname: $HOSTNAME
 EOF
 
     if ! cloud-localds "$SEED_FILE" user-data meta-data; then
-        print_status "ERROR" "Failed to create cloud-init seed image"
+        print_status "ERROR" "Failed to create cloud-init seed image. Ensure 'pkgs.cloud-utils' and 'pkgs.cdrkit' are in dev.nix"
         exit 1
     fi
     
@@ -361,13 +363,25 @@ start_vm() {
             setup_vm_image
         fi
         
+        # === IDX COMPATIBILITY CHECK ===
+        local accel_args=()
+        if [ -c "/dev/kvm" ] && [ -w "/dev/kvm" ]; then
+             print_status "INFO" "KVM detected. Using hardware acceleration."
+             accel_args=("-enable-kvm" "-cpu" "host")
+        else
+             print_status "WARN" "NO KVM DETECTED (Common in IDX/Cloud)."
+             print_status "WARN" "Falling back to TCG (Software Emulation). This will be SLOW."
+             # Use 'max' or 'qemu64' cpu model because 'host' fails without KVM
+             accel_args=("-accel" "tcg" "-cpu" "max")
+        fi
+        # ===============================
+
         # Base QEMU command
         local qemu_cmd=(
             qemu-system-x86_64
-            -enable-kvm
+            "${accel_args[@]}"
             -m "$MEMORY"
             -smp "$CPUS"
-            -cpu host
             -drive "file=$IMG_FILE,format=qcow2,if=virtio"
             -drive "file=$SEED_FILE,format=raw,if=virtio"
             -boot order=c
@@ -386,7 +400,9 @@ start_vm() {
         fi
 
         # Add GUI or console mode
+        # In IDX, we prefer nographic to prevent display errors
         if [[ "$GUI_MODE" == true ]]; then
+            print_status "WARN" "GUI mode requested but usually fails in cloud shells. Try '-nographic' if this hangs."
             qemu_cmd+=(-vga virtio -display gtk,gl=on)
         else
             qemu_cmd+=(-nographic -serial mon:stdio)
