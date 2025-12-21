@@ -2,24 +2,18 @@
 set -euo pipefail
 
 # =============================
-# Enhanced Multi-VM Manager (IDX Edition v2)
+# Enhanced Multi-VM Manager
 # =============================
-
-# Define directory for runtime files (logs, pids)
-RUNTIME_DIR="${VM_DIR:-$HOME/vms}/runtime"
-mkdir -p "$RUNTIME_DIR"
 
 # Function to display header
 display_header() {
     clear
     cat << "EOF"
 ========================================================================
-Sponsor By These Guys!                                                  
+Sponsor By These Guys!                                                                  
 HOPINGBOYZ
 Jishnu
 NotGamerPie
-------------------------------------------------------------------------
-FIREBASE IDX EDITION (Background Mode)
 ========================================================================
 EOF
     echo
@@ -93,7 +87,7 @@ check_dependencies() {
     
     if [ ${#missing_deps[@]} -ne 0 ]; then
         print_status "ERROR" "Missing dependencies: ${missing_deps[*]}"
-        print_status "INFO" "In Firebase IDX, add 'pkgs.qemu', 'pkgs.cloud-utils', and 'pkgs.cdrkit' to your .idx/dev.nix file and rebuild."
+        print_status "INFO" "On Ubuntu/Debian, try: sudo apt install qemu-system cloud-image-utils wget"
         exit 1
     fi
 }
@@ -306,6 +300,7 @@ setup_vm_image() {
     # Resize the disk image if needed
     if ! qemu-img resize "$IMG_FILE" "$DISK_SIZE" 2>/dev/null; then
         print_status "WARN" "Failed to resize disk image. Creating new image with specified size..."
+        # Create a new image with the specified size
         rm -f "$IMG_FILE"
         qemu-img create -f qcow2 -F qcow2 -b "$IMG_FILE" "$IMG_FILE.tmp" "$DISK_SIZE" 2>/dev/null || \
         qemu-img create -f qcow2 "$IMG_FILE" "$DISK_SIZE"
@@ -338,7 +333,7 @@ local-hostname: $HOSTNAME
 EOF
 
     if ! cloud-localds "$SEED_FILE" user-data meta-data; then
-        print_status "ERROR" "Failed to create cloud-init seed image. Ensure 'pkgs.cloud-utils' and 'pkgs.cdrkit' are in dev.nix"
+        print_status "ERROR" "Failed to create cloud-init seed image"
         exit 1
     fi
     
@@ -348,50 +343,39 @@ EOF
 # Function to start a VM
 start_vm() {
     local vm_name=$1
-    local log_file="$RUNTIME_DIR/$vm_name.log"
-    local pid_file="$RUNTIME_DIR/$vm_name.pid"
-
-    if is_vm_running "$vm_name"; then
-        print_status "WARN" "VM '$vm_name' is already running!"
-        return
-    fi
-
+    
     if load_vm_config "$vm_name"; then
-        print_status "INFO" "Starting VM: $vm_name in BACKGROUND..."
+        print_status "INFO" "Starting VM: $vm_name"
+        print_status "INFO" "SSH: ssh -p $SSH_PORT $USERNAME@localhost"
+        print_status "INFO" "Password: $PASSWORD"
         
-        # Check files
+        # Check if image file exists
         if [[ ! -f "$IMG_FILE" ]]; then
             print_status "ERROR" "VM image file not found: $IMG_FILE"
             return 1
         fi
+        
+        # Check if seed file exists
         if [[ ! -f "$SEED_FILE" ]]; then
             print_status "WARN" "Seed file not found, recreating..."
             setup_vm_image
         fi
         
-        # === IDX COMPATIBILITY CHECK ===
-        local accel_args=()
-        if [ -c "/dev/kvm" ] && [ -w "/dev/kvm" ]; then
-             accel_args=("-enable-kvm" "-cpu" "host")
-        else
-             accel_args=("-accel" "tcg" "-cpu" "max")
-        fi
-
         # Base QEMU command
         local qemu_cmd=(
             qemu-system-x86_64
-            "${accel_args[@]}"
+            -enable-kvm
             -m "$MEMORY"
             -smp "$CPUS"
+            -cpu host
             -drive "file=$IMG_FILE,format=qcow2,if=virtio"
             -drive "file=$SEED_FILE,format=raw,if=virtio"
             -boot order=c
             -device virtio-net-pci,netdev=n0
             -netdev "user,id=n0,hostfwd=tcp::$SSH_PORT-:22"
-            -pidfile "$pid_file"
         )
 
-        # Add port forwards
+        # Add port forwards if specified
         if [[ -n "$PORT_FORWARDS" ]]; then
             IFS=',' read -ra forwards <<< "$PORT_FORWARDS"
             for forward in "${forwards[@]}"; do
@@ -401,110 +385,24 @@ start_vm() {
             done
         fi
 
-        # Handle Output/Display
+        # Add GUI or console mode
         if [[ "$GUI_MODE" == true ]]; then
-            # If GUI, we leave display on but background the process
             qemu_cmd+=(-vga virtio -display gtk,gl=on)
         else
-            # Headless mode: Redirect serial to file instead of stdio
-            qemu_cmd+=(-nographic -serial file:"$log_file")
+            qemu_cmd+=(-nographic -serial mon:stdio)
         fi
 
-        # Performance
+        # Add performance enhancements
         qemu_cmd+=(
             -device virtio-balloon-pci
             -object rng-random,filename=/dev/urandom,id=rng0
             -device virtio-rng-pci,rng=rng0
         )
 
-        # Execute in background
-        "${qemu_cmd[@]}" > /dev/null 2>&1 &
+        print_status "INFO" "Starting QEMU..."
+        "${qemu_cmd[@]}"
         
-        sleep 2
-        
-        if [ -f "$pid_file" ] && kill -0 $(cat "$pid_file") 2>/dev/null; then
-            print_status "SUCCESS" "VM started! SSH port: $SSH_PORT"
-            print_status "INFO" "Logs are being written to $log_file"
-        else
-            print_status "ERROR" "VM failed to start. Check $log_file for details."
-        fi
-    fi
-}
-
-# Function to connect via SSH
-connect_ssh() {
-    local vm_name=$1
-    if load_vm_config "$vm_name"; then
-        if is_vm_running "$vm_name"; then
-            print_status "INFO" "Connecting to $vm_name ($USERNAME@localhost:$SSH_PORT)..."
-            # StrictHostKeyChecking=no prevents "Man in the middle" errors when rebuilding VMs on same port
-            ssh -p "$SSH_PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$USERNAME@localhost"
-        else
-            print_status "ERROR" "VM is not running!"
-        fi
-    fi
-}
-
-# Function to watch logs
-watch_logs() {
-    local vm_name=$1
-    local log_file="$RUNTIME_DIR/$vm_name.log"
-    if [ -f "$log_file" ]; then
-        print_status "INFO" "Showing logs for $vm_name (Press Ctrl+C to exit view)..."
-        sleep 1
-        tail -f "$log_file"
-    else
-        print_status "ERROR" "No log file found for $vm_name"
-    fi
-}
-
-# Function to check if VM is running
-is_vm_running() {
-    local vm_name=$1
-    local pid_file="$RUNTIME_DIR/$vm_name.pid"
-    
-    if [ -f "$pid_file" ]; then
-        local pid=$(cat "$pid_file")
-        if kill -0 "$pid" 2>/dev/null; then
-            # Verify it's actually QEMU
-            if ps -p "$pid" -o comm= | grep -q "qemu"; then
-                return 0
-            fi
-        fi
-        # Clean up stale PID file
-        rm -f "$pid_file"
-    fi
-    return 1
-}
-
-# Function to stop a running VM
-stop_vm() {
-    local vm_name=$1
-    local pid_file="$RUNTIME_DIR/$vm_name.pid"
-    
-    if load_vm_config "$vm_name"; then
-        if is_vm_running "$vm_name"; then
-            local pid=$(cat "$pid_file")
-            print_status "INFO" "Stopping VM: $vm_name (PID: $pid)"
-            kill "$pid"
-            
-            # Wait loop
-            local count=0
-            while kill -0 "$pid" 2>/dev/null; do
-                sleep 1
-                ((count++))
-                if [ $count -gt 10 ]; then
-                    print_status "WARN" "Force killing VM..."
-                    kill -9 "$pid"
-                    break
-                fi
-            done
-            
-            rm -f "$pid_file"
-            print_status "SUCCESS" "VM $vm_name stopped"
-        else
-            print_status "INFO" "VM $vm_name is not running"
-        fi
+        print_status "INFO" "VM $vm_name has been shut down"
     fi
 }
 
@@ -512,17 +410,12 @@ stop_vm() {
 delete_vm() {
     local vm_name=$1
     
-    if is_vm_running "$vm_name"; then
-        print_status "ERROR" "Cannot delete a running VM. Stop it first."
-        return
-    fi
-
     print_status "WARN" "This will permanently delete VM '$vm_name' and all its data!"
     read -p "$(print_status "INPUT" "Are you sure? (y/N): ")" -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         if load_vm_config "$vm_name"; then
-            rm -f "$IMG_FILE" "$SEED_FILE" "$VM_DIR/$vm_name.conf" "$RUNTIME_DIR/$vm_name.log" "$RUNTIME_DIR/$vm_name.pid"
+            rm -f "$IMG_FILE" "$SEED_FILE" "$VM_DIR/$vm_name.conf"
             print_status "SUCCESS" "VM '$vm_name' has been deleted"
         fi
     else
@@ -550,9 +443,40 @@ show_vm_info() {
         echo "Port Forwards: ${PORT_FORWARDS:-None}"
         echo "Created: $CREATED"
         echo "Image File: $IMG_FILE"
+        echo "Seed File: $SEED_FILE"
         echo "=========================================="
         echo
         read -p "$(print_status "INPUT" "Press Enter to continue...")"
+    fi
+}
+
+# Function to check if VM is running
+is_vm_running() {
+    local vm_name=$1
+    if pgrep -f "qemu-system-x86_64.*$vm_name" >/dev/null; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Function to stop a running VM
+stop_vm() {
+    local vm_name=$1
+    
+    if load_vm_config "$vm_name"; then
+        if is_vm_running "$vm_name"; then
+            print_status "INFO" "Stopping VM: $vm_name"
+            pkill -f "qemu-system-x86_64.*$IMG_FILE"
+            sleep 2
+            if is_vm_running "$vm_name"; then
+                print_status "WARN" "VM did not stop gracefully, forcing termination..."
+                pkill -9 -f "qemu-system-x86_64.*$IMG_FILE"
+            fi
+            print_status "SUCCESS" "VM $vm_name stopped"
+        else
+            print_status "INFO" "VM $vm_name is not running"
+        fi
     fi
 }
 
@@ -560,11 +484,6 @@ show_vm_info() {
 edit_vm_config() {
     local vm_name=$1
     
-    if is_vm_running "$vm_name"; then
-        print_status "ERROR" "Cannot edit configuration while VM is running. Please stop it first."
-        return
-    fi
-
     if load_vm_config "$vm_name"; then
         print_status "INFO" "Editing VM: $vm_name"
         
@@ -622,6 +541,7 @@ edit_vm_config() {
                         read -p "$(print_status "INPUT" "Enter new SSH port (current: $SSH_PORT): ")" new_ssh_port
                         new_ssh_port="${new_ssh_port:-$SSH_PORT}"
                         if validate_input "port" "$new_ssh_port"; then
+                            # Check if port is already in use
                             if [ "$new_ssh_port" != "$SSH_PORT" ] && ss -tln 2>/dev/null | grep -q ":$new_ssh_port "; then
                                 print_status "ERROR" "Port $new_ssh_port is already in use"
                             else
@@ -642,6 +562,7 @@ edit_vm_config() {
                             GUI_MODE=false
                             break
                         elif [ -z "$gui_input" ]; then
+                            # Keep current value if user just pressed Enter
                             break
                         else
                             print_status "ERROR" "Please answer y or n"
@@ -713,11 +634,6 @@ resize_vm_disk() {
     local vm_name=$1
     
     if load_vm_config "$vm_name"; then
-        if is_vm_running "$vm_name"; then
-            print_status "ERROR" "Cannot resize disk while VM is running. Stop it first."
-            return
-        fi
-
         print_status "INFO" "Current disk size: $DISK_SIZE"
         
         while true; do
@@ -728,6 +644,30 @@ resize_vm_disk() {
                     return 0
                 fi
                 
+                # Check if new size is smaller than current (not recommended)
+                local current_size_num=${DISK_SIZE%[GgMm]}
+                local new_size_num=${new_disk_size%[GgMm]}
+                local current_unit=${DISK_SIZE: -1}
+                local new_unit=${new_disk_size: -1}
+                
+                # Convert both to MB for comparison
+                if [[ "$current_unit" =~ [Gg] ]]; then
+                    current_size_num=$((current_size_num * 1024))
+                fi
+                if [[ "$new_unit" =~ [Gg] ]]; then
+                    new_size_num=$((new_size_num * 1024))
+                fi
+                
+                if [[ $new_size_num -lt $current_size_num ]]; then
+                    print_status "WARN" "Shrinking disk size is not recommended and may cause data loss!"
+                    read -p "$(print_status "INPUT" "Are you sure you want to continue? (y/N): ")" confirm_shrink
+                    if [[ ! "$confirm_shrink" =~ ^[Yy]$ ]]; then
+                        print_status "INFO" "Disk resize cancelled."
+                        return 0
+                    fi
+                fi
+                
+                # Resize the disk
                 print_status "INFO" "Resizing disk to $new_disk_size..."
                 if qemu-img resize "$IMG_FILE" "$new_disk_size"; then
                     DISK_SIZE="$new_disk_size"
@@ -752,28 +692,31 @@ show_vm_performance() {
             print_status "INFO" "Performance metrics for VM: $vm_name"
             echo "=========================================="
             
-            local pid_file="$RUNTIME_DIR/$vm_name.pid"
-            local qemu_pid=$(cat "$pid_file")
-            
-            if [[ -n "$qemu_pid" ]] && kill -0 "$qemu_pid" 2>/dev/null; then
+            # Get QEMU process ID
+            local qemu_pid=$(pgrep -f "qemu-system-x86_64.*$IMG_FILE")
+            if [[ -n "$qemu_pid" ]]; then
                 # Show process stats
-                echo "QEMU Process Stats (PID: $qemu_pid):"
-                ps -p "$qemu_pid" -o %cpu,%mem,rss,vsz,cmd --no-headers | awk '{print "CPU: "$1"%, MEM: "$2"%, RSS: "$3" KB"}'
+                echo "QEMU Process Stats:"
+                ps -p "$qemu_pid" -o pid,%cpu,%mem,sz,rss,vsz,cmd --no-headers
                 echo
                 
-                # Show memory usage of host
-                echo "Host Memory Usage:"
+                # Show memory usage
+                echo "Memory Usage:"
                 free -h
                 echo
                 
                 # Show disk usage
-                echo "Disk Image Usage:"
-                du -h "$IMG_FILE"
+                echo "Disk Usage:"
+                df -h "$IMG_FILE" 2>/dev/null || du -h "$IMG_FILE"
             else
                 print_status "ERROR" "Could not find QEMU process for VM $vm_name"
             fi
         else
             print_status "INFO" "VM $vm_name is not running"
+            echo "Configuration:"
+            echo "  Memory: $MEMORY MB"
+            echo "  CPUs: $CPUS"
+            echo "  Disk: $DISK_SIZE"
         fi
         echo "=========================================="
         read -p "$(print_status "INPUT" "Press Enter to continue...")"
@@ -791,11 +734,11 @@ main_menu() {
         if [ $vm_count -gt 0 ]; then
             print_status "INFO" "Found $vm_count existing VM(s):"
             for i in "${!vms[@]}"; do
+                local status="Stopped"
                 if is_vm_running "${vms[$i]}"; then
-                     echo -e "  $((i+1))) ${vms[$i]} \033[1;32m[● RUNNING]\033[0m"
-                else
-                     echo -e "  $((i+1))) ${vms[$i]} \033[1;31m[○ STOPPED]\033[0m"
+                    status="Running"
                 fi
+                printf "  %2d) %s (%s)\n" $((i+1)) "${vms[$i]}" "$status"
             done
             echo
         fi
@@ -803,15 +746,13 @@ main_menu() {
         echo "Main Menu:"
         echo "  1) Create a new VM"
         if [ $vm_count -gt 0 ]; then
-            echo "  2) Start a VM (Background)"
-            echo "  3) Connect via SSH"
-            echo "  4) Stop a VM"
-            echo "  5) Show VM info"
-            echo "  6) Watch Console/Logs"
-            echo "  7) Edit VM configuration"
-            echo "  8) Delete a VM"
-            echo "  9) Resize VM disk"
-            echo " 10) Show VM performance"
+            echo "  2) Start a VM"
+            echo "  3) Stop a VM"
+            echo "  4) Show VM info"
+            echo "  5) Edit VM configuration"
+            echo "  6) Delete a VM"
+            echo "  7) Resize VM disk"
+            echo "  8) Show VM performance"
         fi
         echo "  0) Exit"
         echo
@@ -819,7 +760,9 @@ main_menu() {
         read -p "$(print_status "INPUT" "Enter your choice: ")" choice
         
         case $choice in
-            1) create_new_vm ;;
+            1)
+                create_new_vm
+                ;;
             2)
                 if [ $vm_count -gt 0 ]; then
                     read -p "$(print_status "INPUT" "Enter VM number to start: ")" vm_num
@@ -832,65 +775,61 @@ main_menu() {
                 ;;
             3)
                 if [ $vm_count -gt 0 ]; then
-                    read -p "$(print_status "INPUT" "Enter VM number to connect to: ")" vm_num
+                    read -p "$(print_status "INPUT" "Enter VM number to stop: ")" vm_num
                     if [[ "$vm_num" =~ ^[0-9]+$ ]] && [ "$vm_num" -ge 1 ] && [ "$vm_num" -le $vm_count ]; then
-                        connect_ssh "${vms[$((vm_num-1))]}"
+                        stop_vm "${vms[$((vm_num-1))]}"
+                    else
+                        print_status "ERROR" "Invalid selection"
                     fi
                 fi
                 ;;
             4)
                 if [ $vm_count -gt 0 ]; then
-                    read -p "$(print_status "INPUT" "Enter VM number to stop: ")" vm_num
+                    read -p "$(print_status "INPUT" "Enter VM number to show info: ")" vm_num
                     if [[ "$vm_num" =~ ^[0-9]+$ ]] && [ "$vm_num" -ge 1 ] && [ "$vm_num" -le $vm_count ]; then
-                        stop_vm "${vms[$((vm_num-1))]}"
+                        show_vm_info "${vms[$((vm_num-1))]}"
+                    else
+                        print_status "ERROR" "Invalid selection"
                     fi
                 fi
                 ;;
             5)
                 if [ $vm_count -gt 0 ]; then
-                    read -p "$(print_status "INPUT" "Enter VM number to show info: ")" vm_num
+                    read -p "$(print_status "INPUT" "Enter VM number to edit: ")" vm_num
                     if [[ "$vm_num" =~ ^[0-9]+$ ]] && [ "$vm_num" -ge 1 ] && [ "$vm_num" -le $vm_count ]; then
-                        show_vm_info "${vms[$((vm_num-1))]}"
+                        edit_vm_config "${vms[$((vm_num-1))]}"
+                    else
+                        print_status "ERROR" "Invalid selection"
                     fi
                 fi
                 ;;
             6)
                 if [ $vm_count -gt 0 ]; then
-                    read -p "$(print_status "INPUT" "Enter VM number to watch logs: ")" vm_num
+                    read -p "$(print_status "INPUT" "Enter VM number to delete: ")" vm_num
                     if [[ "$vm_num" =~ ^[0-9]+$ ]] && [ "$vm_num" -ge 1 ] && [ "$vm_num" -le $vm_count ]; then
-                        watch_logs "${vms[$((vm_num-1))]}"
+                        delete_vm "${vms[$((vm_num-1))]}"
+                    else
+                        print_status "ERROR" "Invalid selection"
                     fi
                 fi
                 ;;
             7)
                 if [ $vm_count -gt 0 ]; then
-                    read -p "$(print_status "INPUT" "Enter VM number to edit: ")" vm_num
+                    read -p "$(print_status "INPUT" "Enter VM number to resize disk: ")" vm_num
                     if [[ "$vm_num" =~ ^[0-9]+$ ]] && [ "$vm_num" -ge 1 ] && [ "$vm_num" -le $vm_count ]; then
-                        edit_vm_config "${vms[$((vm_num-1))]}"
+                        resize_vm_disk "${vms[$((vm_num-1))]}"
+                    else
+                        print_status "ERROR" "Invalid selection"
                     fi
                 fi
                 ;;
             8)
                 if [ $vm_count -gt 0 ]; then
-                    read -p "$(print_status "INPUT" "Enter VM number to delete: ")" vm_num
-                    if [[ "$vm_num" =~ ^[0-9]+$ ]] && [ "$vm_num" -ge 1 ] && [ "$vm_num" -le $vm_count ]; then
-                        delete_vm "${vms[$((vm_num-1))]}"
-                    fi
-                fi
-                ;;
-            9)
-                 if [ $vm_count -gt 0 ]; then
-                    read -p "$(print_status "INPUT" "Enter VM number to resize disk: ")" vm_num
-                    if [[ "$vm_num" =~ ^[0-9]+$ ]] && [ "$vm_num" -ge 1 ] && [ "$vm_num" -le $vm_count ]; then
-                        resize_vm_disk "${vms[$((vm_num-1))]}"
-                    fi
-                fi
-                ;;
-            10)
-                 if [ $vm_count -gt 0 ]; then
                     read -p "$(print_status "INPUT" "Enter VM number to show performance: ")" vm_num
                     if [[ "$vm_num" =~ ^[0-9]+$ ]] && [ "$vm_num" -ge 1 ] && [ "$vm_num" -le $vm_count ]; then
                         show_vm_performance "${vms[$((vm_num-1))]}"
+                    else
+                        print_status "ERROR" "Invalid selection"
                     fi
                 fi
                 ;;
