@@ -57,7 +57,7 @@ if not os.path.exists(IMG):
     os.rename(f"{IMG}.tmp", IMG)
     sh(f"qemu-img resize {IMG} {DISK_SIZE}")
 
-# Cloud-init with GUI auto-install
+# Cloud-init with GUI + SSH password enabled
 if not os.path.exists(SEED):
     with open("user-data", "w") as f:
         f.write(f"""#cloud-config
@@ -80,6 +80,9 @@ packages:
   - dbus-x11
 
 runcmd:
+  - sed -i 's/^#\\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+  - sed -i 's/^#\\?PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+  - systemctl restart ssh
   - systemctl set-default graphical.target
   - systemctl enable lightdm
   - reboot
@@ -105,19 +108,14 @@ print("► Starting Cloudflare tunnel...")
 sh("rm -f /tmp/cf.log")
 sh(f"cloudflared tunnel --url http://localhost:{WEB_PORT} --no-autoupdate >/tmp/cf.log 2>&1 &")
 
-public = ""
-for _ in range(40):
+for _ in range(120):
     out = subprocess.getoutput("grep -o 'https://[a-z0-9.-]*trycloudflare.com' /tmp/cf.log | tail -1")
     if out:
-        public = out
+        print("\n🌐 Public URL:\n" + out + "/vnc.html\n")
         break
     time.sleep(1)
 
-if public:
-    print("\n🌐 Public URL:")
-    print(public + "/vnc.html\n")
-
-# CPU guard (70%)
+# CPU guard
 def limit_qemu_cpu():
     while True:
         for pid in subprocess.getoutput("pgrep -f qemu-system-x86_64").split():
@@ -142,7 +140,7 @@ sh(
 threading.Thread(target=limit_qemu_cpu, daemon=True).start()
 
 print("VM running.")
-print("Debian GUI will auto-install on first boot.")
+print("Debian GUI auto-installs on first boot.")
 print("Login: user / password")
 print("SSH: ssh user@localhost -p 2222\n")
 
