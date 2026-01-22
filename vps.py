@@ -52,6 +52,7 @@ ensure_nix([
     "nixpkgs.qemu",
     "nixpkgs.tigervnc",
     "nixpkgs.fluxbox",
+    "nixpkgs.xterm",
     "nixpkgs.cloud-utils",
     "nixpkgs.wget",
     "nixpkgs.git",
@@ -99,9 +100,14 @@ sh("pkill -f novnc_proxy >/dev/null 2>&1")
 sh("pkill -f cloudflared >/dev/null 2>&1")
 
 # ================= DISPLAY =================
-sh(f"Xvnc {VNC_DISPLAY} -geometry 1280x720 -depth 16 -rfbport {VNC_PORT} -localhost yes -SecurityTypes None &")
+sh(f"Xvnc {VNC_DISPLAY} -geometry 1280x720 -depth 24 -rfbport {VNC_PORT} -localhost yes -SecurityTypes None &")
 time.sleep(2)
+
 sh(f"DISPLAY={VNC_DISPLAY} fluxbox &")
+time.sleep(1)
+
+# Open terminal so screen is not black
+sh(f"DISPLAY={VNC_DISPLAY} xterm &")
 
 # noVNC
 sh(f"./novnc/utils/novnc_proxy --vnc localhost:{VNC_PORT} --listen {WEB_PORT} &")
