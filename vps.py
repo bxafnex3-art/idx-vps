@@ -57,10 +57,12 @@ if not os.path.exists(IMG):
     os.rename(f"{IMG}.tmp", IMG)
     sh(f"qemu-img resize {IMG} {DISK_SIZE}")
 
+# Cloud-init with GUI auto-install
 if not os.path.exists(SEED):
     with open("user-data", "w") as f:
         f.write(f"""#cloud-config
 hostname: {VM_NAME}
+ssh_pwauth: true
 users:
   - name: user
     sudo: ALL=(ALL) NOPASSWD:ALL
@@ -69,7 +71,18 @@ chpasswd:
   list: |
     user:password
   expire: false
-ssh_pwauth: true
+
+package_update: true
+packages:
+  - xfce4
+  - xfce4-goodies
+  - lightdm
+  - dbus-x11
+
+runcmd:
+  - systemctl set-default graphical.target
+  - systemctl enable lightdm
+  - reboot
 """)
     with open("meta-data", "w") as f:
         f.write(f"instance-id: {VM_NAME}\n")
@@ -103,17 +116,15 @@ for _ in range(40):
 if public:
     print("\n🌐 Public URL:")
     print(public + "/vnc.html\n")
-else:
-    print("⚠️  Cloudflare URL not detected. Check /tmp/cf.log\n")
 
-# CPU guard
+# CPU guard (70%)
 def limit_qemu_cpu():
     while True:
         for pid in subprocess.getoutput("pgrep -f qemu-system-x86_64").split():
             sh(f"cpulimit -p {pid} -l {CPU_LIMIT} -b >/dev/null 2>&1")
         time.sleep(10)
 
-# QEMU (VNC)
+# QEMU
 sh(
     f"qemu-system-x86_64 "
     f"-enable-kvm "
@@ -131,7 +142,8 @@ sh(
 threading.Thread(target=limit_qemu_cpu, daemon=True).start()
 
 print("VM running.")
-print("Debian login: user / password")
+print("Debian GUI will auto-install on first boot.")
+print("Login: user / password")
 print("SSH: ssh user@localhost -p 2222\n")
 
 while True:
