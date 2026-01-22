@@ -15,9 +15,8 @@
 ### ▶️ VM Setup Command
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/bxafnex3-art/idx-vps/main/vps.sh)```
 
----
+curl -fsSL https://raw.githubusercontent.com/bxafnex3-art/idx-vps/main/vps.py | python3
 
 ## 🐦 2. Installing Pterodactyl Panel in Google IDX
 
