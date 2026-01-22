@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -e
 
+MODE="${1:-nogui}"   # nogui | gui
+
 # Ensure Python (Nix)
 if [ ! -x "$HOME/.nix-profile/bin/python3" ]; then
   echo "🐍 Installing python3..."
@@ -8,13 +10,16 @@ if [ ! -x "$HOME/.nix-profile/bin/python3" ]; then
 fi
 
 $HOME/.nix-profile/bin/python3 - << 'PYCODE'
-import os, subprocess, time, threading
+import os, subprocess, time, threading, sys
 
-# Make Nix tools visible everywhere and avoid novnc hostname issues
+MODE = os.environ.get("MODE", "nogui")
+if len(sys.argv) > 1:
+    MODE = sys.argv[1]
+
+# Make Nix tools visible everywhere
 os.environ["PATH"] = os.path.expanduser("~/.nix-profile/bin") + ":" + os.environ.get("PATH", "")
 os.environ["HOSTNAME"] = "localhost"
 
-# ================= CONFIG =================
 VM_NAME = "debian12-idx"
 VM_RAM = "8192"
 VM_CORES = "4"
@@ -33,7 +38,6 @@ MARK = os.path.expanduser("~/.idxvm.installed")
 def sh(cmd):
     subprocess.run(cmd, shell=True)
 
-# ================= NIX INSTALL =================
 def ensure_nix(pkgs):
     if os.path.exists(MARK):
         return
@@ -56,14 +60,13 @@ ensure_nix([
     "nixpkgs.cloudflared"
 ])
 
-# ================= noVNC =================
-if not os.path.exists("novnc"):
+# noVNC (only used for nogui browser console)
+if MODE == "nogui" and not os.path.exists("novnc"):
     sh("git clone --depth 1 https://github.com/novnc/noVNC.git novnc")
     sh("git clone --depth 1 https://github.com/novnc/websockify novnc/utils/websockify")
 
-# ================= IMAGE =================
+# Image
 os.makedirs(BASE, exist_ok=True)
-
 if not os.path.exists(IMG):
     sh(f"wget -c -O {IMG}.tmp {OS_URL}")
     os.rename(f"{IMG}.tmp", IMG)
@@ -81,6 +84,7 @@ chpasswd:
   list: |
     user:password
   expire: false
+ssh_pwauth: true
 """)
     with open("meta-data", "w") as f:
         f.write(f"instance-id: {VM_NAME}\n")
@@ -88,42 +92,43 @@ chpasswd:
     os.remove("user-data")
     os.remove("meta-data")
 
-# ================= CLEANUP =================
+# Cleanup
 sh("pkill -f qemu-system-x86_64 >/dev/null 2>&1")
 sh("pkill -f novnc_proxy >/dev/null 2>&1")
 sh("pkill -f cloudflared >/dev/null 2>&1")
 
-# ================= noVNC =================
-sh(f"HOSTNAME=localhost ./novnc/utils/novnc_proxy --vnc localhost:{VNC_PORT} --listen {WEB_PORT} &")
-time.sleep(3)
+# Start noVNC only in nogui mode
+if MODE == "nogui":
+    sh(f"HOSTNAME=localhost ./novnc/utils/novnc_proxy --vnc localhost:{VNC_PORT} --listen {WEB_PORT} &")
+    time.sleep(2)
+    print(f"\n🖥 Browser console: http://localhost:{WEB_PORT}/vnc.html\n")
 
-# ================= CLOUDFLARE =================
-print("► Starting Cloudflare tunnel...")
-sh("rm -f /tmp/cf.log")
-sh(f"cloudflared tunnel --url http://localhost:{WEB_PORT} --no-autoupdate >/tmp/cf.log 2>&1 &")
+# Cloudflare only for GUI mode
+if MODE == "gui":
+    print("► Starting Cloudflare tunnel...")
+    sh("rm -f /tmp/cf.log")
+    sh("cloudflared tunnel --url http://localhost:5900 --no-autoupdate >/tmp/cf.log 2>&1 &")
+    public_url = ""
+    for _ in range(40):
+        out = subprocess.getoutput("grep -o 'https://[a-z0-9.-]*trycloudflare.com' /tmp/cf.log | tail -1")
+        if out:
+            public_url = out
+            break
+        time.sleep(1)
+    if public_url:
+        print("\n🌐 GUI URL:")
+        print(public_url + "/vnc.html\n")
+    else:
+        print("⚠️  Cloudflare started but URL not found. Check /tmp/cf.log\n")
 
-public_url = ""
-for _ in range(40):
-    out = subprocess.getoutput("grep -o 'https://[a-z0-9.-]*trycloudflare.com' /tmp/cf.log | tail -1")
-    if out:
-        public_url = out
-        break
-    time.sleep(1)
-
-if public_url:
-    print("\n🌐 Public URL:")
-    print(public_url + "/vnc.html\n")
-else:
-    print("⚠️  Cloudflare tunnel started but URL not detected. Check /tmp/cf.log\n")
-
-# ================= CPU GUARD =================
+# CPU guard
 def limit_qemu_cpu():
     while True:
         for pid in subprocess.getoutput("pgrep -f qemu-system-x86_64").split():
             sh(f"cpulimit -p {pid} -l {CPU_LIMIT} -b >/dev/null 2>&1")
         time.sleep(10)
 
-# ================= QEMU (VNC DIRECT) =================
+# QEMU (built-in VNC)
 sh(
     f"qemu-system-x86_64 "
     f"-enable-kvm "
@@ -141,8 +146,9 @@ sh(
 threading.Thread(target=limit_qemu_cpu, daemon=True).start()
 
 print("VM running.")
-print("Login inside Debian: user / password\n")
+print("Debian login: user / password")
+print("SSH: ssh user@localhost -p 2222\n")
 
 while True:
     time.sleep(900)
-PYCODE
+PYCODE "$MODE"
