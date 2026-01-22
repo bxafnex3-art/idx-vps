@@ -22,8 +22,7 @@ DISK_SIZE = "30G"
 OS_URL = "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2"
 
 WEB_PORT = 6080
-VNC_PORT = 5901
-VNC_DISPLAY = ":1"
+VNC_PORT = 5900
 CPU_LIMIT = 70
 
 BASE = os.path.expanduser("~/idxvm")
@@ -50,15 +49,10 @@ def ensure_nix(pkgs):
 
 ensure_nix([
     "nixpkgs.qemu",
-    "nixpkgs.tigervnc",
-    "nixpkgs.fluxbox",
-    "nixpkgs.xterm",
     "nixpkgs.cloud-utils",
     "nixpkgs.wget",
     "nixpkgs.git",
-    "nixpkgs.cloudflared",
-    "nixpkgs.cpulimit",
-    "nixpkgs.hostname"
+    "nixpkgs.cpulimit"
 ])
 
 # ================= noVNC =================
@@ -94,38 +88,12 @@ chpasswd:
     os.remove("meta-data")
 
 # ================= CLEANUP =================
-sh("pkill -f Xvnc >/dev/null 2>&1")
 sh("pkill -f qemu-system-x86_64 >/dev/null 2>&1")
 sh("pkill -f novnc_proxy >/dev/null 2>&1")
-sh("pkill -f cloudflared >/dev/null 2>&1")
 
-# ================= DISPLAY =================
-sh(f"Xvnc {VNC_DISPLAY} -geometry 1280x720 -depth 24 -rfbport {VNC_PORT} -localhost yes -SecurityTypes None &")
-time.sleep(2)
-
-sh(f"DISPLAY={VNC_DISPLAY} fluxbox &")
-time.sleep(1)
-
-# Open terminal so screen is not black
-sh(f"DISPLAY={VNC_DISPLAY} xterm &")
-
-# noVNC
+# ================= noVNC =================
 sh(f"./novnc/utils/novnc_proxy --vnc localhost:{VNC_PORT} --listen {WEB_PORT} &")
-time.sleep(5)
-
-# ================= CLOUDFLARE =================
-print("► Starting Cloudflare tunnel...")
-sh("rm -f /tmp/cf.log")
-sh(f"cloudflared tunnel --url http://localhost:{WEB_PORT} --no-autoupdate >/tmp/cf.log 2>&1 &")
-
-for _ in range(30):
-    out = subprocess.getoutput("grep -o 'https://[a-z0-9.-]*trycloudflare.com' /tmp/cf.log | tail -1")
-    if out:
-        print("\n🌐 Public URL:", out, "\n")
-        break
-    time.sleep(1)
-else:
-    print("⚠️  Tunnel started, URL not detected yet. Check /tmp/cf.log")
+time.sleep(2)
 
 # ================= CPU GUARD =================
 def limit_qemu_cpu():
@@ -134,24 +102,27 @@ def limit_qemu_cpu():
             sh(f"cpulimit -p {pid} -l {CPU_LIMIT} -b >/dev/null 2>&1")
         time.sleep(10)
 
-# ================= QEMU =================
+# ================= QEMU (VNC DIRECT) =================
 sh(
-    f"DISPLAY={VNC_DISPLAY} "
     f"qemu-system-x86_64 "
     f"-enable-kvm "
     f"-m {VM_RAM} "
     f"-smp {VM_CORES} "
     f"-cpu host "
-    f"-drive file={IMG},format=qcow2,if=virtio,cache=writeback "
+    f"-drive file={IMG},format=qcow2,if=virtio "
     f"-drive file={SEED},format=raw,if=virtio "
     f"-netdev user,id=n1,hostfwd=tcp::2222-:22 "
     f"-device virtio-net-pci,netdev=n1 "
-    f"-vga virtio -display gtk,gl=off &"
+    f"-vga virtio "
+    f"-vnc :0 &"
 )
 
 threading.Thread(target=limit_qemu_cpu, daemon=True).start()
 
-print("\nVM ready. Login: user / password\n")
+print("\nVM running.")
+print(f"Open: http://localhost:{WEB_PORT}/vnc.html")
+print("Login inside Debian: user / password\n")
+
 while True:
     time.sleep(900)
 PYCODE
