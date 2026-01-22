@@ -1,12 +1,20 @@
 #!/usr/bin/env bash
 set -e
 
+# Ensure Python (Nix)
+if [ ! -x "$HOME/.nix-profile/bin/python3" ]; then
+  echo "🐍 Installing python3..."
+  nix-env -iA nixpkgs.python3
+fi
+
 $HOME/.nix-profile/bin/python3 - << 'PYCODE'
 import os, subprocess, time, threading
 
-# Ensure Nix binaries are visible
-os.environ["PATH"] = os.path.expanduser("~/.nix-profile/bin") + ":" + os.environ.get("PATH","")
+# Make Nix tools visible everywhere
+os.environ["PATH"] = os.path.expanduser("~/.nix-profile/bin") + ":" + os.environ.get("PATH", "")
+os.environ["HOSTNAME"] = "idxvm"
 
+# ================= CONFIG =================
 VM_NAME = "debian12-idx"
 VM_RAM = "8192"
 VM_CORES = "4"
@@ -26,6 +34,7 @@ MARK = os.path.expanduser("~/.idxvm.installed")
 def sh(cmd):
     subprocess.run(cmd, shell=True)
 
+# ================= NIX INSTALL =================
 def ensure_nix(pkgs):
     if os.path.exists(MARK):
         return
@@ -35,6 +44,7 @@ def ensure_nix(pkgs):
         if subprocess.call(f"nix-env -q {name} >/dev/null 2>&1", shell=True) != 0:
             missing.append(p)
     if missing:
+        print("📦 Installing:", " ".join(missing))
         sh(f"nix-env -iA {' '.join(missing)}")
     open(MARK, "w").close()
 
@@ -49,10 +59,12 @@ ensure_nix([
     "nixpkgs.cpulimit"
 ])
 
+# ================= noVNC =================
 if not os.path.exists("novnc"):
     sh("git clone --depth 1 https://github.com/novnc/noVNC.git novnc")
     sh("git clone --depth 1 https://github.com/novnc/websockify novnc/utils/websockify")
 
+# ================= IMAGE =================
 os.makedirs(BASE, exist_ok=True)
 
 if not os.path.exists(IMG):
@@ -79,26 +91,35 @@ chpasswd:
     os.remove("user-data")
     os.remove("meta-data")
 
+# ================= CLEANUP =================
 sh("pkill -f Xvnc >/dev/null 2>&1")
 sh("pkill -f qemu-system-x86_64 >/dev/null 2>&1")
 sh("pkill -f novnc_proxy >/dev/null 2>&1")
 sh("pkill -f cloudflared >/dev/null 2>&1")
 
+# ================= DISPLAY =================
 sh(f"Xvnc {VNC_DISPLAY} -geometry 1280x720 -depth 16 -rfbport {VNC_PORT} -localhost yes -SecurityTypes None &")
 time.sleep(2)
 sh(f"DISPLAY={VNC_DISPLAY} fluxbox &")
+
+# noVNC
 sh(f"./novnc/utils/novnc_proxy --vnc localhost:{VNC_PORT} --listen {WEB_PORT} &")
-
-sh(f"cloudflared tunnel --url http://localhost:{WEB_PORT} --no-autoupdate >/tmp/cf.log 2>&1 &")
 time.sleep(3)
-sh("grep -o 'https://[a-z0-9.-]*trycloudflare.com' /tmp/cf.log | tail -1")
 
+# Cloudflare
+print("► Starting Cloudflare tunnel...")
+sh(f"cloudflared tunnel --url http://localhost:{WEB_PORT} --no-autoupdate >/tmp/cf.log 2>&1 &")
+time.sleep(4)
+sh("grep -o 'https://[a-z0-9.-]*trycloudflare.com' /tmp/cf.log | tail -1 || true")
+
+# ================= CPU GUARD =================
 def limit_qemu_cpu():
     while True:
         for pid in subprocess.getoutput("pgrep -f qemu-system-x86_64").split():
             sh(f"cpulimit -p {pid} -l {CPU_LIMIT} -b >/dev/null 2>&1")
         time.sleep(10)
 
+# ================= QEMU =================
 sh(
     f"DISPLAY={VNC_DISPLAY} "
     f"qemu-system-x86_64 "
@@ -115,7 +136,7 @@ sh(
 
 threading.Thread(target=limit_qemu_cpu, daemon=True).start()
 
-print("VM ready. user/password")
+print("\nVM ready. Login: user / password\n")
 while True:
     time.sleep(900)
 PYCODE
