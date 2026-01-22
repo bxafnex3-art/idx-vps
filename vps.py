@@ -4,7 +4,7 @@ import os, subprocess, time, threading
 VM_NAME = "debian12-idx"
 VM_RAM = "4096"
 VM_CORES = "2"
-DISK_SIZE = "20G"
+DISK_SIZE = "25G"
 OS_URL = "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2"
 
 WEB_PORT = 6080
@@ -49,14 +49,14 @@ if not os.path.exists("novnc"):
     sh("git clone --depth 1 https://github.com/novnc/noVNC.git novnc")
     sh("git clone --depth 1 https://github.com/novnc/websockify novnc/utils/websockify")
 
-# VM image (never delete once created)
+# VM disk (persistent)
 os.makedirs(BASE, exist_ok=True)
 if not os.path.exists(IMG):
     sh(f"wget -c -O {IMG}.tmp {OS_URL}")
     os.rename(f"{IMG}.tmp", IMG)
     sh(f"qemu-img resize {IMG} {DISK_SIZE}")
 
-# cloud-init (runs only on first creation)
+# cloud-init (runs once)
 if not os.path.exists(SEED):
     with open("user-data", "w") as f:
         f.write(f"""#cloud-config
@@ -77,13 +77,30 @@ packages:
   - xfce4-goodies
   - lightdm
   - dbus-x11
+  - curl
+  - wget
+  - git
+  - nano
+  - unzip
+  - zip
+  - build-essential
+  - xclip
+  - chromium
 
 runcmd:
+  # Antigravity repo
+  - mkdir -p /etc/apt/keyrings
+  - curl -fsSL https://us-central1-apt.pkg.dev/doc/repo-signing-key.gpg | gpg --dearmor --yes -o /etc/apt/keyrings/antigravity-repo-key.gpg
+  - echo "deb [signed-by=/etc/apt/keyrings/antigravity-repo-key.gpg] https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev/ antigravity-debian main" > /etc/apt/sources.list.d/antigravity.list
+  - apt update
+  - apt install -y antigravity
+
+  # Enable GUI + password SSH
   - sed -i 's/^#\\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
-  - sed -i 's/^#\\?PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
   - systemctl restart ssh
   - systemctl set-default graphical.target
   - systemctl enable lightdm
+
   - reboot
 """)
     with open("meta-data", "w") as f:
@@ -92,7 +109,7 @@ runcmd:
     os.remove("user-data")
     os.remove("meta-data")
 
-# Cleanup old processes only
+# Cleanup old processes
 sh("pkill -f qemu-system-x86_64 >/dev/null 2>&1")
 sh("pkill -f novnc_proxy >/dev/null 2>&1")
 sh("pkill -f cloudflared >/dev/null 2>&1")
@@ -140,8 +157,7 @@ threading.Thread(target=limit_qemu_cpu, daemon=True).start()
 
 print("VM running.")
 print("Login: user / password")
-print("SSH (auto-fix):")
-print("  ssh-keygen -R \"[localhost]:2222\" >/dev/null 2>&1; ssh user@localhost -p 2222\n")
+print("SSH: ssh-keygen -R \"[localhost]:2222\" >/dev/null 2>&1; ssh user@localhost -p 2222\n")
 
 while True:
     time.sleep(900)
