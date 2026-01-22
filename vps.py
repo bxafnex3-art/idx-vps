@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import os, subprocess, time, threading
 
-# ================= CONFIG =================
 VM_NAME = "debian12-idx"
 VM_RAM = "4096"
 VM_CORES = "2"
@@ -50,14 +49,14 @@ if not os.path.exists("novnc"):
     sh("git clone --depth 1 https://github.com/novnc/noVNC.git novnc")
     sh("git clone --depth 1 https://github.com/novnc/websockify novnc/utils/websockify")
 
-# Image
+# VM image (never delete once created)
 os.makedirs(BASE, exist_ok=True)
 if not os.path.exists(IMG):
     sh(f"wget -c -O {IMG}.tmp {OS_URL}")
     os.rename(f"{IMG}.tmp", IMG)
     sh(f"qemu-img resize {IMG} {DISK_SIZE}")
 
-# Cloud-init with GUI + SSH password enabled
+# cloud-init (runs only on first creation)
 if not os.path.exists(SEED):
     with open("user-data", "w") as f:
         f.write(f"""#cloud-config
@@ -93,7 +92,7 @@ runcmd:
     os.remove("user-data")
     os.remove("meta-data")
 
-# Cleanup
+# Cleanup old processes only
 sh("pkill -f qemu-system-x86_64 >/dev/null 2>&1")
 sh("pkill -f novnc_proxy >/dev/null 2>&1")
 sh("pkill -f cloudflared >/dev/null 2>&1")
@@ -108,7 +107,7 @@ print("► Starting Cloudflare tunnel...")
 sh("rm -f /tmp/cf.log")
 sh(f"cloudflared tunnel --url http://localhost:{WEB_PORT} --no-autoupdate >/tmp/cf.log 2>&1 &")
 
-for _ in range(120):
+for _ in range(180):
     out = subprocess.getoutput("grep -o 'https://[a-z0-9.-]*trycloudflare.com' /tmp/cf.log | tail -1")
     if out:
         print("\n🌐 Public URL:\n" + out + "/vnc.html\n")
@@ -140,9 +139,9 @@ sh(
 threading.Thread(target=limit_qemu_cpu, daemon=True).start()
 
 print("VM running.")
-print("Debian GUI auto-installs on first boot.")
 print("Login: user / password")
-print("SSH: ssh user@localhost -p 2222\n")
+print("SSH (auto-fix):")
+print("  ssh-keygen -R \"[localhost]:2222\" >/dev/null 2>&1; ssh user@localhost -p 2222\n")
 
 while True:
     time.sleep(900)
