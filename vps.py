@@ -12,9 +12,7 @@ fi
 $HOME/.nix-profile/bin/python3 - << 'PYCODE'
 import os, subprocess, time, threading, sys
 
-MODE = os.environ.get("MODE", "nogui")
-if len(sys.argv) > 1:
-    MODE = sys.argv[1]
+MODE = sys.argv[1] if len(sys.argv) > 1 else "nogui"
 
 # Make Nix tools visible everywhere
 os.environ["PATH"] = os.path.expanduser("~/.nix-profile/bin") + ":" + os.environ.get("PATH", "")
@@ -60,7 +58,7 @@ ensure_nix([
     "nixpkgs.cloudflared"
 ])
 
-# noVNC (only used for nogui browser console)
+# noVNC only for nogui
 if MODE == "nogui" and not os.path.exists("novnc"):
     sh("git clone --depth 1 https://github.com/novnc/noVNC.git novnc")
     sh("git clone --depth 1 https://github.com/novnc/websockify novnc/utils/websockify")
@@ -92,34 +90,28 @@ ssh_pwauth: true
     os.remove("user-data")
     os.remove("meta-data")
 
-# Cleanup
+# Cleanup old processes
 sh("pkill -f qemu-system-x86_64 >/dev/null 2>&1")
 sh("pkill -f novnc_proxy >/dev/null 2>&1")
 sh("pkill -f cloudflared >/dev/null 2>&1")
 
-# Start noVNC only in nogui mode
+# noVNC for nogui
 if MODE == "nogui":
     sh(f"HOSTNAME=localhost ./novnc/utils/novnc_proxy --vnc localhost:{VNC_PORT} --listen {WEB_PORT} &")
     time.sleep(2)
     print(f"\n🖥 Browser console: http://localhost:{WEB_PORT}/vnc.html\n")
 
-# Cloudflare only for GUI mode
+# Cloudflare only for GUI
 if MODE == "gui":
     print("► Starting Cloudflare tunnel...")
     sh("rm -f /tmp/cf.log")
     sh("cloudflared tunnel --url http://localhost:5900 --no-autoupdate >/tmp/cf.log 2>&1 &")
-    public_url = ""
     for _ in range(40):
         out = subprocess.getoutput("grep -o 'https://[a-z0-9.-]*trycloudflare.com' /tmp/cf.log | tail -1")
         if out:
-            public_url = out
+            print("\n🌐 GUI URL:\n" + out + "/vnc.html\n")
             break
         time.sleep(1)
-    if public_url:
-        print("\n🌐 GUI URL:")
-        print(public_url + "/vnc.html\n")
-    else:
-        print("⚠️  Cloudflare started but URL not found. Check /tmp/cf.log\n")
 
 # CPU guard
 def limit_qemu_cpu():
