@@ -56,7 +56,8 @@ ensure_nix([
     "nixpkgs.wget",
     "nixpkgs.git",
     "nixpkgs.cloudflared",
-    "nixpkgs.cpulimit"
+    "nixpkgs.cpulimit",
+    "nixpkgs.hostname"
 ])
 
 # ================= noVNC =================
@@ -104,13 +105,21 @@ sh(f"DISPLAY={VNC_DISPLAY} fluxbox &")
 
 # noVNC
 sh(f"./novnc/utils/novnc_proxy --vnc localhost:{VNC_PORT} --listen {WEB_PORT} &")
-time.sleep(3)
+time.sleep(5)
 
-# Cloudflare
+# ================= CLOUDFLARE =================
 print("► Starting Cloudflare tunnel...")
+sh("rm -f /tmp/cf.log")
 sh(f"cloudflared tunnel --url http://localhost:{WEB_PORT} --no-autoupdate >/tmp/cf.log 2>&1 &")
-time.sleep(4)
-sh("grep -o 'https://[a-z0-9.-]*trycloudflare.com' /tmp/cf.log | tail -1 || true")
+
+for _ in range(30):
+    out = subprocess.getoutput("grep -o 'https://[a-z0-9.-]*trycloudflare.com' /tmp/cf.log | tail -1")
+    if out:
+        print("\n🌐 Public URL:", out, "\n")
+        break
+    time.sleep(1)
+else:
+    print("⚠️  Tunnel started, URL not detected yet. Check /tmp/cf.log")
 
 # ================= CPU GUARD =================
 def limit_qemu_cpu():
