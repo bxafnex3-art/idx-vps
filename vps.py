@@ -1,21 +1,16 @@
 #!/usr/bin/env bash
 set -e
+export NIX_CONFIG="download-buffer-size = 50000000"
 
-# ---- 0. Ensure Python exists (Nix) ----
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "🐍 python3 not found, installing with Nix..."
+# Ensure python
+if [ ! -x "$HOME/.nix-profile/bin/python3" ]; then
+  echo "🐍 python3 not found, installing..."
   nix-env -iA nixpkgs.python3
-else
-  echo "🐍 python3 already installed."
 fi
 
-# ---- 1. Run the VM launcher ----
-python3 - << 'PYCODE'
-import os, subprocess, time
+$HOME/.nix-profile/bin/python3 - << 'PYCODE'
+import os, subprocess, time, threading
 
-# ===========================
-# CONFIG
-# ===========================
 VM_NAME = "debian12-idx"
 VM_RAM = "8192"
 VM_CORES = "4"
@@ -37,17 +32,13 @@ def sh(cmd):
 def ensure_nix(pkgs):
     missing = []
     for p in pkgs:
-        if subprocess.call(f"nix-env -q {p.split('.')[-1]} >/dev/null 2>&1", shell=True) != 0:
+        name = p.split(".")[-1]
+        if subprocess.call(f"nix-env -q {name} >/dev/null 2>&1", shell=True) != 0:
             missing.append(p)
     if missing:
-        print("📦 Installing missing packages:", " ".join(missing))
+        print("📦 Installing:", " ".join(missing))
         sh(f"nix-env -iA {' '.join(missing)}")
-    else:
-        print("📦 All packages already installed.")
 
-# ===========================
-# INSTALL TOOLS
-# ===========================
 ensure_nix([
     "nixpkgs.qemu",
     "nixpkgs.tigervnc",
@@ -59,27 +50,20 @@ ensure_nix([
 ])
 
 if not os.path.exists("novnc"):
-    print("⬇️  Cloning noVNC...")
     sh("git clone --depth 1 https://github.com/novnc/noVNC.git novnc")
     sh("git clone --depth 1 https://github.com/novnc/websockify novnc/utils/websockify")
 
-# ===========================
-# IMAGE SETUP
-# ===========================
 os.makedirs(BASE, exist_ok=True)
 
 if not os.path.exists(IMG):
-    print("⬇️  Downloading Debian image...")
     sh(f"wget -O {IMG}.tmp {OS_URL}")
     os.rename(f"{IMG}.tmp", IMG)
     sh(f"qemu-img resize {IMG} {DISK_SIZE}")
 
 if not os.path.exists(SEED):
-    print("🔑 Creating cloud-init seed...")
     with open("user-data", "w") as f:
         f.write(f"""#cloud-config
 hostname: {VM_NAME}
-ssh_pwauth: true
 users:
   - name: user
     sudo: ALL=(ALL) NOPASSWD:ALL
@@ -90,63 +74,37 @@ chpasswd:
   expire: false
 """)
     with open("meta-data", "w") as f:
-        f.write(f"instance-id: {VM_NAME}\nlocal-hostname: {VM_NAME}\n")
-
+        f.write(f"instance-id: {VM_NAME}\n")
     sh(f"cloud-localds {SEED} user-data meta-data")
     os.remove("user-data")
     os.remove("meta-data")
-
-# ===========================
-# START SYSTEM
-# ===========================
-print("🚀 Starting services...")
 
 sh("pkill -f Xvnc >/dev/null 2>&1")
 sh("pkill -f qemu-system-x86_64 >/dev/null 2>&1")
 sh("pkill -f novnc_proxy >/dev/null 2>&1")
 sh("pkill -f cloudflared >/dev/null 2>&1")
 
-print("► VNC display")
-sh(f"Xvnc {VNC_DISPLAY} -geometry 1280x720 -depth 16 "
-   f"-rfbport {VNC_PORT} -localhost yes -SecurityTypes None >/dev/null 2>&1 &")
+sh(f"Xvnc {VNC_DISPLAY} -geometry 1280x720 -depth 16 -rfbport {VNC_PORT} -localhost yes -SecurityTypes None &")
 time.sleep(2)
-
-print("► Fluxbox")
-sh(f"export DISPLAY={VNC_DISPLAY}; fluxbox >/dev/null 2>&1 &")
-
-print("► noVNC")
-sh(f"./novnc/utils/novnc_proxy --vnc localhost:{VNC_PORT} "
-   f"--listen {WEB_PORT} >/dev/null 2>&1 &")
+sh(f"export DISPLAY={VNC_DISPLAY}; fluxbox &")
+sh(f"./novnc/utils/novnc_proxy --vnc localhost:{VNC_PORT} --listen {WEB_PORT} &")
 
 if USE_CLOUDFLARE:
-    print("► Cloudflare Tunnel")
-    sh(f"cloudflared tunnel --url http://localhost:{WEB_PORT} "
-       f"--no-autoupdate >/tmp/cf.log 2>&1 &")
+    sh(f"cloudflared tunnel --url http://localhost:{WEB_PORT} --no-autoupdate >/tmp/cf.log 2>&1 &")
     time.sleep(3)
     sh("grep -o 'https://[a-z0-9.-]*trycloudflare.com' /tmp/cf.log | tail -1")
 
-print("► QEMU (KVM)")
 sh(
     f"export DISPLAY={VNC_DISPLAY}; "
-    f"qemu-system-x86_64 "
-    f"-enable-kvm "
-    f"-m {VM_RAM} "
-    f"-smp {VM_CORES} "
-    f"-cpu host "
+    f"qemu-system-x86_64 -enable-kvm -m {VM_RAM} -smp {VM_CORES} -cpu host "
     f"-drive file={IMG},format=qcow2,if=virtio "
     f"-drive file={SEED},format=raw,if=virtio "
     f"-netdev user,id=n1,hostfwd=tcp::2222-:22 "
     f"-device virtio-net-pci,netdev=n1 "
-    f"-vga virtio -display gtk,gl=off "
-    f">/dev/null 2>&1 &"
+    f"-vga virtio -display gtk,gl=off &"
 )
 
-print("\n" + "="*60)
-print("✅ DEBIAN 12 VM READY")
-print("="*60)
-print("Login: user / password")
-print("="*60)
-
+print("VM ready. user/password")
 while True:
-    time.sleep(60)
+    time.sleep(300)
 PYCODE
