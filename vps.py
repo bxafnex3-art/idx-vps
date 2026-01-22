@@ -10,9 +10,9 @@ fi
 $HOME/.nix-profile/bin/python3 - << 'PYCODE'
 import os, subprocess, time, threading
 
-# Make Nix tools visible everywhere
+# Make Nix tools visible everywhere and avoid novnc hostname issues
 os.environ["PATH"] = os.path.expanduser("~/.nix-profile/bin") + ":" + os.environ.get("PATH", "")
-os.environ["HOSTNAME"] = "idxvm"
+os.environ["HOSTNAME"] = "localhost"
 
 # ================= CONFIG =================
 VM_NAME = "debian12-idx"
@@ -52,7 +52,8 @@ ensure_nix([
     "nixpkgs.cloud-utils",
     "nixpkgs.wget",
     "nixpkgs.git",
-    "nixpkgs.cpulimit"
+    "nixpkgs.cpulimit",
+    "nixpkgs.cloudflared"
 ])
 
 # ================= noVNC =================
@@ -90,10 +91,30 @@ chpasswd:
 # ================= CLEANUP =================
 sh("pkill -f qemu-system-x86_64 >/dev/null 2>&1")
 sh("pkill -f novnc_proxy >/dev/null 2>&1")
+sh("pkill -f cloudflared >/dev/null 2>&1")
 
 # ================= noVNC =================
-sh(f"./novnc/utils/novnc_proxy --vnc localhost:{VNC_PORT} --listen {WEB_PORT} &")
-time.sleep(2)
+sh(f"HOSTNAME=localhost ./novnc/utils/novnc_proxy --vnc localhost:{VNC_PORT} --listen {WEB_PORT} &")
+time.sleep(3)
+
+# ================= CLOUDFLARE =================
+print("► Starting Cloudflare tunnel...")
+sh("rm -f /tmp/cf.log")
+sh(f"cloudflared tunnel --url http://localhost:{WEB_PORT} --no-autoupdate >/tmp/cf.log 2>&1 &")
+
+public_url = ""
+for _ in range(40):
+    out = subprocess.getoutput("grep -o 'https://[a-z0-9.-]*trycloudflare.com' /tmp/cf.log | tail -1")
+    if out:
+        public_url = out
+        break
+    time.sleep(1)
+
+if public_url:
+    print("\n🌐 Public URL:")
+    print(public_url + "/vnc.html\n")
+else:
+    print("⚠️  Cloudflare tunnel started but URL not detected. Check /tmp/cf.log\n")
 
 # ================= CPU GUARD =================
 def limit_qemu_cpu():
@@ -119,8 +140,7 @@ sh(
 
 threading.Thread(target=limit_qemu_cpu, daemon=True).start()
 
-print("\nVM running.")
-print(f"Open: http://localhost:{WEB_PORT}/vnc.html")
+print("VM running.")
 print("Login inside Debian: user / password\n")
 
 while True:
