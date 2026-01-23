@@ -2,8 +2,8 @@
 import os, subprocess, time, threading
 
 # --- CONFIGURATION ---
-VM_NAME = "debian12-crd-v6"
-VM_RAM = "7168"                 # 7GB RAM (Requested)
+VM_NAME = "debian12-crd-v7"
+VM_RAM = "7168"                 # 7GB RAM
 VM_CORES = "6"                  # 6 Cores
 DISK_SIZE = "10G"               # 10GB Disk
 CRD_PIN = "121212"              # PIN
@@ -84,6 +84,14 @@ write_files:
     permissions: '0755'
     content: |
       #!/bin/bash
+      # 1. Force unlock apt if it is stuck
+      echo "🔧 Checking for background installers..."
+      sudo killall apt apt-get 2>/dev/null
+      sudo rm /var/lib/apt/lists/lock 2>/dev/null
+      sudo rm /var/cache/apt/archives/lock 2>/dev/null
+      sudo rm /var/lib/dpkg/lock* 2>/dev/null
+      sudo dpkg --configure -a
+      
       echo "---------------------------------------------"
       echo "  SETTING UP CHROME REMOTE DESKTOP"
       echo "---------------------------------------------"
@@ -94,11 +102,10 @@ write_files:
           echo "🔧 Installing it now (Please wait 1-2 mins)..."
           wget -q -O /tmp/crd.deb https://dl.google.com/linux/direct/chrome-remote-desktop_current_amd64.deb
           sudo apt update
-          # FIX: Replaced 'xrandr' with 'x11-xserver-utils'
           sudo apt install -y /tmp/crd.deb xfce4 xfce4-goodies x11-xserver-utils
           sudo apt --fix-broken install -y
           
-          # FIX: Force create the session file for the user
+          # Force create the session file
           sudo bash -c 'echo "exec /usr/bin/xfce4-session" > /etc/chrome-remote-desktop-session'
           echo "exec /usr/bin/xfce4-session" > ~/.chrome-remote-desktop-session
           echo "exec /usr/bin/xfce4-session" > ~/.xsession
@@ -106,21 +113,23 @@ write_files:
           echo "✅ Installation repaired."
       fi
 
-      echo "1. Stopping any running services..."
-      sudo systemctl stop chrome-remote-desktop
-      
-      echo "2. Cleaning old configs..."
+      echo "Stopping old services..."
+      sudo systemctl stop chrome-remote-desktop >/dev/null 2>&1
       rm -rf ~/.config/chrome-remote-desktop
       
-      echo "3. Paste the 'Debian Linux' command from Google now:"
-      read CRD_CMD
-      
-      if [ -z "$CRD_CMD" ]; then
-        echo "❌ Error: You didn't paste anything!"
-        exit 1
-      fi
+      # LOOP UNTIL VALID INPUT
+      while true; do
+          echo ""
+          echo "👉 Paste the 'Debian Linux' command from Google (starts with DISPLAY=):"
+          read CRD_CMD
+          if [[ "$CRD_CMD" == DISPLAY=* ]]; then
+              break
+          else
+              echo "❌ Invalid input. Please copy the full command starting with 'DISPLAY=' and paste again."
+          fi
+      done
 
-      echo "4. Registering with PIN {CRD_PIN}..."
+      echo "🚀 Registering with PIN {CRD_PIN}..."
       eval "$CRD_CMD --pin={CRD_PIN}"
       
       echo "---------------------------------------------"
@@ -177,10 +186,10 @@ while subprocess.call("ssh -o ConnectTimeout=2 -o StrictHostKeyChecking=no -p 22
 
 print("\n" + "="*50)
 if IS_EXISTING_VM:
-    print("     ✅ VM RESUMED (Data Saved)")
+    print("     ✅ VM RESUMED")
     print("="*50)
     print("1. Go to: https://remotedesktop.google.com/access")
-    print(f"2. Click on '{VM_NAME}' (it should come online in ~30s)")
+    print(f"2. Click on '{VM_NAME}'")
     print("3. Enter PIN: 121212")
 else:
     print("     🚀 NEW INSTALLATION DETECTED")
