@@ -2,7 +2,7 @@
 import os, subprocess, time, threading
 
 # --- CONFIGURATION ---
-VM_NAME = "debian12-crd-7gb"
+VM_NAME = "debian12-crd-v6"
 VM_RAM = "7168"                 # 7GB RAM (Requested)
 VM_CORES = "6"                  # 6 Cores
 DISK_SIZE = "10G"               # 10GB Disk
@@ -61,7 +61,7 @@ packages:
   - xfce4
   - xfce4-goodies
   - xbase-clients
-  - xrandr
+  - x11-xserver-utils
   - curl
   - wget
   - git
@@ -90,12 +90,14 @@ write_files:
       
       # AUTO-HEAL: Check if CRD is actually installed
       if [ ! -f /opt/google/chrome-remote-desktop/start-host ]; then
-          echo "⚠️ Chrome Remote Desktop not found (Boot too fast?)"
+          echo "⚠️ Chrome Remote Desktop not found."
           echo "🔧 Installing it now (Please wait 1-2 mins)..."
           wget -q -O /tmp/crd.deb https://dl.google.com/linux/direct/chrome-remote-desktop_current_amd64.deb
           sudo apt update
-          sudo apt install -y /tmp/crd.deb xfce4 xfce4-goodies xrandr
+          # FIX: Replaced 'xrandr' with 'x11-xserver-utils'
+          sudo apt install -y /tmp/crd.deb xfce4 xfce4-goodies x11-xserver-utils
           sudo apt --fix-broken install -y
+          
           # FIX: Force create the session file for the user
           sudo bash -c 'echo "exec /usr/bin/xfce4-session" > /etc/chrome-remote-desktop-session'
           echo "exec /usr/bin/xfce4-session" > ~/.chrome-remote-desktop-session
