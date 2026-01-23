@@ -2,8 +2,8 @@
 import os, subprocess, time, threading
 
 # --- CONFIGURATION ---
-VM_NAME = "debian12-crd-v7"
-VM_RAM = "7168"                 # 7GB RAM
+VM_NAME = "debian12-merged-final"
+VM_RAM = "7168"                 # 7GB RAM (High Performance)
 VM_CORES = "6"                  # 6 Cores
 DISK_SIZE = "10G"               # 10GB Disk
 CRD_PIN = "121212"              # PIN
@@ -58,10 +58,14 @@ chpasswd:
   expire: false
 package_update: true
 packages:
+  # Desktop Environment (Merged from Old Script)
   - xfce4
   - xfce4-goodies
+  - lightdm
+  - dbus-x11
   - xbase-clients
   - x11-xserver-utils
+  # Tools
   - curl
   - wget
   - git
@@ -70,22 +74,27 @@ packages:
   - zip
   - build-essential
   - xclip
-  - chromium
   - python3-psutil
+  # Apps
+  - chromium
+
 write_files:
   - path: /usr/local/bin/fix-res
     permissions: '0755'
     content: |
       #!/bin/bash
+      echo "Setting resolution to 1920x1080..."
       xrandr --newmode "1920x1080_60.00" 173.00 1920 2048 2248 2576 1080 1083 1088 1120 -hsync +vsync
       xrandr --addmode Virtual-1 1920x1080_60.00
       xrandr -s 1920x1080
+      echo "Done."
+
   - path: /usr/local/bin/setup-crd
     permissions: '0755'
     content: |
       #!/bin/bash
-      # 1. Force unlock apt if it is stuck
-      echo "🔧 Checking for background installers..."
+      # 1. Force unlock apt (Fixes the "Cache Lock" errors)
+      echo "🔧 Cleaning up background locks..."
       sudo killall apt apt-get 2>/dev/null
       sudo rm /var/lib/apt/lists/lock 2>/dev/null
       sudo rm /var/cache/apt/archives/lock 2>/dev/null
@@ -102,16 +111,15 @@ write_files:
           echo "🔧 Installing it now (Please wait 1-2 mins)..."
           wget -q -O /tmp/crd.deb https://dl.google.com/linux/direct/chrome-remote-desktop_current_amd64.deb
           sudo apt update
-          sudo apt install -y /tmp/crd.deb xfce4 xfce4-goodies x11-xserver-utils
+          sudo apt install -y /tmp/crd.deb
           sudo apt --fix-broken install -y
-          
-          # Force create the session file
-          sudo bash -c 'echo "exec /usr/bin/xfce4-session" > /etc/chrome-remote-desktop-session'
-          echo "exec /usr/bin/xfce4-session" > ~/.chrome-remote-desktop-session
-          echo "exec /usr/bin/xfce4-session" > ~/.xsession
-          chmod +x ~/.chrome-remote-desktop-session ~/.xsession
           echo "✅ Installation repaired."
       fi
+
+      # Ensure Session Config is Correct
+      echo "exec /usr/bin/xfce4-session" > ~/.chrome-remote-desktop-session
+      echo "exec /usr/bin/xfce4-session" > ~/.xsession
+      chmod +x ~/.chrome-remote-desktop-session ~/.xsession
 
       echo "Stopping old services..."
       sudo systemctl stop chrome-remote-desktop >/dev/null 2>&1
@@ -137,22 +145,34 @@ write_files:
       echo "---------------------------------------------"
 
 runcmd:
+  # 1. Create Swap File (Prevents Crashes with 7GB RAM)
+  - fallocate -l 4G /swapfile
+  - chmod 600 /swapfile
+  - mkswap /swapfile
+  - swapon /swapfile
+  - echo '/swapfile none swap sw 0 0' >> /etc/fstab
+
+  # 2. Install Chrome Remote Desktop
   - wget https://dl.google.com/linux/direct/chrome-remote-desktop_current_amd64.deb
   - apt install -y ./chrome-remote-desktop_current_amd64.deb
   - rm chrome-remote-desktop_current_amd64.deb
-  # FIX: Set XFCE as default session GLOBALLY and LOCALLY
+  
+  # 3. Configure Session (Global & Local)
   - echo "exec /usr/bin/xfce4-session" > /etc/chrome-remote-desktop-session
   - echo "exec /usr/bin/xfce4-session" > /home/user/.chrome-remote-desktop-session
   - echo "exec /usr/bin/xfce4-session" > /home/user/.xsession
   - chown user:user /home/user/.chrome-remote-desktop-session /home/user/.xsession
   - chmod +x /home/user/.chrome-remote-desktop-session /home/user/.xsession
   
-  # ANTIGRAVITY INSTALLATION
+  # 4. Install Antigravity (Merged from Old Script)
   - mkdir -p /etc/apt/keyrings
   - curl -fsSL https://us-central1-apt.pkg.dev/doc/repo-signing-key.gpg | gpg --dearmor --yes -o /etc/apt/keyrings/antigravity-repo-key.gpg
   - echo "deb [signed-by=/etc/apt/keyrings/antigravity-repo-key.gpg] https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev/ antigravity-debian main" > /etc/apt/sources.list.d/antigravity.list
   - apt update
   - apt install -y antigravity
+
+  # 5. Enable Services & Reboot
+  - systemctl enable lightdm
   - systemctl set-default graphical.target
   - reboot
 """)
