@@ -5,7 +5,7 @@ import os, subprocess, time, threading
 VM_NAME = "debian12-crd-final"
 VM_RAM = "6144"         # Set to 6GB (Safer than 7GB to avoid crashes)
 VM_CORES = "6"
-DISK_SIZE = "25G"
+DISK_SIZE = "10G"
 CRD_PIN = "121212"
 
 CPU_LIMIT_PERCENT = 420 # 70% of 6 Cores
