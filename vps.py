@@ -2,14 +2,14 @@
 import os, subprocess, time, threading, sys
 
 # --- CONFIGURATION ---
-VM_NAME = "debian12-v16-final"
-VM_RAM = "8192"                 # 8GB RAM (Requested)
-VM_CORES = "6"                  # 6 Cores
-DISK_SIZE = "10G"               # 10GB Disk (Requested)
+VM_NAME = "debian12-v17-stable"
+VM_RAM = "8192"                 # 5GB RAM (Safe Limit for Containers)
+VM_CORES = "6"                  # 4 Cores (Stability)
+DISK_SIZE = "10G"               # 10GB Disk
 CRD_PIN = "121212"              # PIN
 
-# CPU LIMIT: 70% of 6 Cores = 420
-CPU_LIMIT_PERCENT = 420
+# CPU LIMIT: 70% of 4 Cores = 280
+CPU_LIMIT_PERCENT = 280
 
 # --- INSTALLER SCRIPT (Runs inside VM) ---
 INSTALL_SCRIPT = """
@@ -64,8 +64,11 @@ chown user:user /home/user/Desktop/*.desktop
 # 7. Final Config
 echo "exec /usr/bin/xfce4-session" > /home/user/.chrome-remote-desktop-session
 sudo systemctl set-default graphical.target
-sudo systemctl unmask chrome-remote-desktop
-sudo systemctl enable chrome-remote-desktop
+
+# CRITICAL FIX: Unmask service before enabling
+sudo systemctl unmask chrome-remote-desktop.service
+sudo systemctl enable chrome-remote-desktop.service
+sudo systemctl restart chrome-remote-desktop.service
 
 echo "--------------------------------------------------"
 echo "✅ INSTALLATION COMPLETE!"
@@ -198,7 +201,7 @@ threading.Thread(target=limit_cpu, daemon=True).start()
 print("⏳ Waiting for VM connectivity...")
 while True:
     if subprocess.call("pgrep -f qemu-system-x86_64 >/dev/null", shell=True) != 0:
-        print("❌ CRITICAL: VM Process Died.")
+        print("❌ CRITICAL: VM Process Died. (RAM was too high for container)")
         sys.exit(1)
         
     # Using sshpass to check connection without prompting
