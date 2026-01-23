@@ -3,7 +3,7 @@ import os, subprocess, time, threading
 
 # --- CONFIGURATION ---
 VM_NAME = "debian12-merged-final"
-VM_RAM = "7168"                 # 7GB RAM (High Performance)
+VM_RAM = "7168"                 # 7GB RAM
 VM_CORES = "6"                  # 6 Cores
 DISK_SIZE = "10G"               # 10GB Disk
 CRD_PIN = "121212"              # PIN
@@ -58,14 +58,16 @@ chpasswd:
   expire: false
 package_update: true
 packages:
-  # Desktop Environment (Merged from Old Script)
+  # Desktop
   - xfce4
   - xfce4-goodies
   - lightdm
   - dbus-x11
   - xbase-clients
   - x11-xserver-utils
-  # Tools
+  # Apps
+  - chromium
+  # Tools (from your old script)
   - curl
   - wget
   - git
@@ -75,26 +77,21 @@ packages:
   - build-essential
   - xclip
   - python3-psutil
-  # Apps
-  - chromium
 
 write_files:
   - path: /usr/local/bin/fix-res
     permissions: '0755'
     content: |
       #!/bin/bash
-      echo "Setting resolution to 1920x1080..."
       xrandr --newmode "1920x1080_60.00" 173.00 1920 2048 2248 2576 1080 1083 1088 1120 -hsync +vsync
       xrandr --addmode Virtual-1 1920x1080_60.00
       xrandr -s 1920x1080
-      echo "Done."
 
   - path: /usr/local/bin/setup-crd
     permissions: '0755'
     content: |
       #!/bin/bash
-      # 1. Force unlock apt (Fixes the "Cache Lock" errors)
-      echo "🔧 Cleaning up background locks..."
+      # 1. Force unlock apt
       sudo killall apt apt-get 2>/dev/null
       sudo rm /var/lib/apt/lists/lock 2>/dev/null
       sudo rm /var/cache/apt/archives/lock 2>/dev/null
@@ -104,28 +101,36 @@ write_files:
       echo "---------------------------------------------"
       echo "  SETTING UP CHROME REMOTE DESKTOP"
       echo "---------------------------------------------"
+
+      # STATUS CHECK: Is Antigravity installed yet?
+      if ! command -v antigravity &> /dev/null; then
+          echo "⏳ Antigravity is still installing in the background..."
+          echo "   (This usually takes 2-3 minutes after boot)"
+          echo "   We will continue with CRD setup, but check back soon."
+      else
+          echo "✅ Antigravity is installed and ready."
+      fi
       
-      # AUTO-HEAL: Check if CRD is actually installed
+      # AUTO-HEAL CRD
       if [ ! -f /opt/google/chrome-remote-desktop/start-host ]; then
-          echo "⚠️ Chrome Remote Desktop not found."
-          echo "🔧 Installing it now (Please wait 1-2 mins)..."
+          echo "🔧 Chrome Remote Desktop missing. Installing..."
           wget -q -O /tmp/crd.deb https://dl.google.com/linux/direct/chrome-remote-desktop_current_amd64.deb
           sudo apt update
           sudo apt install -y /tmp/crd.deb
           sudo apt --fix-broken install -y
-          echo "✅ Installation repaired."
+          echo "✅ CRD Installed."
       fi
 
-      # Ensure Session Config is Correct
+      # Ensure Session
       echo "exec /usr/bin/xfce4-session" > ~/.chrome-remote-desktop-session
       echo "exec /usr/bin/xfce4-session" > ~/.xsession
       chmod +x ~/.chrome-remote-desktop-session ~/.xsession
 
-      echo "Stopping old services..."
+      # Reset Service
       sudo systemctl stop chrome-remote-desktop >/dev/null 2>&1
       rm -rf ~/.config/chrome-remote-desktop
       
-      # LOOP UNTIL VALID INPUT
+      # INPUT LOOP
       while true; do
           echo ""
           echo "👉 Paste the 'Debian Linux' command from Google (starts with DISPLAY=):"
@@ -133,11 +138,11 @@ write_files:
           if [[ "$CRD_CMD" == DISPLAY=* ]]; then
               break
           else
-              echo "❌ Invalid input. Please copy the full command starting with 'DISPLAY=' and paste again."
+              echo "❌ Invalid input. Try again."
           fi
       done
 
-      echo "🚀 Registering with PIN {CRD_PIN}..."
+      echo "🚀 Registering..."
       eval "$CRD_CMD --pin={CRD_PIN}"
       
       echo "---------------------------------------------"
@@ -145,34 +150,26 @@ write_files:
       echo "---------------------------------------------"
 
 runcmd:
-  # 1. Create Swap File (Prevents Crashes with 7GB RAM)
+  # 1. Swap File (Critical for 7GB RAM stability)
   - fallocate -l 4G /swapfile
   - chmod 600 /swapfile
   - mkswap /swapfile
   - swapon /swapfile
   - echo '/swapfile none swap sw 0 0' >> /etc/fstab
 
-  # 2. Install Chrome Remote Desktop
-  - wget https://dl.google.com/linux/direct/chrome-remote-desktop_current_amd64.deb
-  - apt install -y ./chrome-remote-desktop_current_amd64.deb
-  - rm chrome-remote-desktop_current_amd64.deb
-  
-  # 3. Configure Session (Global & Local)
-  - echo "exec /usr/bin/xfce4-session" > /etc/chrome-remote-desktop-session
-  - echo "exec /usr/bin/xfce4-session" > /home/user/.chrome-remote-desktop-session
-  - echo "exec /usr/bin/xfce4-session" > /home/user/.xsession
-  - chown user:user /home/user/.chrome-remote-desktop-session /home/user/.xsession
-  - chmod +x /home/user/.chrome-remote-desktop-session /home/user/.xsession
-  
-  # 4. Install Antigravity (Merged from Old Script)
+  # 2. Antigravity Setup (Priority High)
   - mkdir -p /etc/apt/keyrings
   - curl -fsSL https://us-central1-apt.pkg.dev/doc/repo-signing-key.gpg | gpg --dearmor --yes -o /etc/apt/keyrings/antigravity-repo-key.gpg
   - echo "deb [signed-by=/etc/apt/keyrings/antigravity-repo-key.gpg] https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev/ antigravity-debian main" > /etc/apt/sources.list.d/antigravity.list
   - apt update
   - apt install -y antigravity
 
-  # 5. Enable Services & Reboot
-  - systemctl enable lightdm
+  # 3. CRD Install
+  - wget https://dl.google.com/linux/direct/chrome-remote-desktop_current_amd64.deb
+  - apt install -y ./chrome-remote-desktop_current_amd64.deb
+  
+  # 4. Final Configs
+  - echo "exec /usr/bin/xfce4-session" > /etc/chrome-remote-desktop-session
   - systemctl set-default graphical.target
   - reboot
 """)
@@ -199,8 +196,8 @@ sh(
 )
 threading.Thread(target=limit_cpu, daemon=True).start()
 
-# 5. SMART INSTRUCTIONS
-print("⏳ Waiting for VM connectivity (This will take 3-5 mins)...")
+# 5. INSTRUCTIONS
+print("⏳ Waiting for VM connectivity...")
 while subprocess.call("ssh -o ConnectTimeout=2 -o StrictHostKeyChecking=no -p 2222 user@localhost 'echo ok' >/dev/null 2>&1", shell=True) != 0:
     time.sleep(2)
 
