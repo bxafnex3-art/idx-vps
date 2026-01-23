@@ -2,7 +2,7 @@
 import os, subprocess, time, threading
 
 # --- CONFIGURATION ---
-VM_NAME = "debian12-merged-final"
+VM_NAME = "debian12-chrome-v9"
 VM_RAM = "7168"                 # 7GB RAM
 VM_CORES = "6"                  # 6 Cores
 DISK_SIZE = "10G"               # 10GB Disk
@@ -58,16 +58,16 @@ chpasswd:
   expire: false
 package_update: true
 packages:
-  # Desktop
+  # Desktop Environment
   - xfce4
   - xfce4-goodies
   - lightdm
   - dbus-x11
   - xbase-clients
   - x11-xserver-utils
-  # Apps
+  # Browsers (Chromium as backup)
   - chromium
-  # Tools (from your old script)
+  # Tools
   - curl
   - wget
   - git
@@ -91,7 +91,7 @@ write_files:
     permissions: '0755'
     content: |
       #!/bin/bash
-      # 1. Force unlock apt
+      # 1. Unlock apt
       sudo killall apt apt-get 2>/dev/null
       sudo rm /var/lib/apt/lists/lock 2>/dev/null
       sudo rm /var/cache/apt/archives/lock 2>/dev/null
@@ -101,32 +101,26 @@ write_files:
       echo "---------------------------------------------"
       echo "  SETTING UP CHROME REMOTE DESKTOP"
       echo "---------------------------------------------"
-
-      # STATUS CHECK: Is Antigravity installed yet?
-      if ! command -v antigravity &> /dev/null; then
-          echo "⏳ Antigravity is still installing in the background..."
-          echo "   (This usually takes 2-3 minutes after boot)"
-          echo "   We will continue with CRD setup, but check back soon."
-      else
-          echo "✅ Antigravity is installed and ready."
-      fi
       
-      # AUTO-HEAL CRD
+      # AUTO-HEAL: Check CRD
       if [ ! -f /opt/google/chrome-remote-desktop/start-host ]; then
-          echo "🔧 Chrome Remote Desktop missing. Installing..."
+          echo "⚠️ CRD missing. Installing..."
           wget -q -O /tmp/crd.deb https://dl.google.com/linux/direct/chrome-remote-desktop_current_amd64.deb
           sudo apt update
           sudo apt install -y /tmp/crd.deb
           sudo apt --fix-broken install -y
-          echo "✅ CRD Installed."
       fi
 
-      # Ensure Session
+      # Force Session Config
       echo "exec /usr/bin/xfce4-session" > ~/.chrome-remote-desktop-session
       echo "exec /usr/bin/xfce4-session" > ~/.xsession
       chmod +x ~/.chrome-remote-desktop-session ~/.xsession
 
-      # Reset Service
+      # Unmask Service
+      sudo systemctl unmask chrome-remote-desktop
+      sudo systemctl enable chrome-remote-desktop
+
+      echo "Stopping old services..."
       sudo systemctl stop chrome-remote-desktop >/dev/null 2>&1
       rm -rf ~/.config/chrome-remote-desktop
       
@@ -150,26 +144,51 @@ write_files:
       echo "---------------------------------------------"
 
 runcmd:
-  # 1. Swap File (Critical for 7GB RAM stability)
+  # 1. Swap File
   - fallocate -l 4G /swapfile
   - chmod 600 /swapfile
   - mkswap /swapfile
   - swapon /swapfile
   - echo '/swapfile none swap sw 0 0' >> /etc/fstab
 
-  # 2. Antigravity Setup (Priority High)
+  # 2. ANTIGRAVITY (Official Instructions)
   - mkdir -p /etc/apt/keyrings
   - curl -fsSL https://us-central1-apt.pkg.dev/doc/repo-signing-key.gpg | gpg --dearmor --yes -o /etc/apt/keyrings/antigravity-repo-key.gpg
-  - echo "deb [signed-by=/etc/apt/keyrings/antigravity-repo-key.gpg] https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev/ antigravity-debian main" > /etc/apt/sources.list.d/antigravity.list
+  - echo "deb [signed-by=/etc/apt/keyrings/antigravity-repo-key.gpg] https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev/ antigravity-debian main" | tee /etc/apt/sources.list.d/antigravity.list > /dev/null
   - apt update
   - apt install -y antigravity
 
-  # 3. CRD Install
+  # 3. GOOGLE CHROME (Main) & CRD
+  - wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+  - apt install -y ./google-chrome-stable_current_amd64.deb
+  - rm google-chrome-stable_current_amd64.deb
   - wget https://dl.google.com/linux/direct/chrome-remote-desktop_current_amd64.deb
   - apt install -y ./chrome-remote-desktop_current_amd64.deb
+  - rm chrome-remote-desktop_current_amd64.deb
   
-  # 4. Final Configs
+  # 4. Create Desktop Shortcuts
+  - mkdir -p /home/user/Desktop
+  - chown user:user /home/user/Desktop
+  
+  # Shortcut: Antigravity
+  - echo '[Desktop Entry]\nVersion=1.0\nType=Application\nName=Antigravity\nExec=xfce4-terminal -e "antigravity"\nIcon=utilities-terminal\nTerminal=false\nStartupNotify=false' > /home/user/Desktop/antigravity.desktop
+  
+  # Shortcut: Google Chrome (Main)
+  - echo '[Desktop Entry]\nVersion=1.0\nType=Application\nName=Google Chrome\nExec=google-chrome-stable\nIcon=google-chrome\nTerminal=false\nStartupNotify=true' > /home/user/Desktop/google-chrome.desktop
+  
+  # Shortcut: Chromium (Backup)
+  - echo '[Desktop Entry]\nVersion=1.0\nType=Application\nName=Chromium Backup\nExec=chromium\nIcon=chromium\nTerminal=false\nStartupNotify=true' > /home/user/Desktop/chromium.desktop
+  
+  - chmod +x /home/user/Desktop/*.desktop
+  - chown user:user /home/user/Desktop/*.desktop
+
+  # 5. Final Config
   - echo "exec /usr/bin/xfce4-session" > /etc/chrome-remote-desktop-session
+  # Auto-unmask service for boot
+  - systemctl unmask chrome-remote-desktop.service
+  - systemctl enable chrome-remote-desktop.service
+  
+  - systemctl enable lightdm
   - systemctl set-default graphical.target
   - reboot
 """)
