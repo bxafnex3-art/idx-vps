@@ -2,10 +2,10 @@
 import os, subprocess, time, threading
 
 # --- CONFIGURATION ---
-VM_NAME = "debian12-crd-fixed"  # Changed name to force fresh install
+VM_NAME = "debian12-crd-fixed"
 VM_RAM = "6144"                 # 6GB RAM
 VM_CORES = "6"                  # 6 Cores
-DISK_SIZE = "10G"               # 10GB Disk (Requested)
+DISK_SIZE = "10G"               # 10GB Disk
 CRD_PIN = "121212"              # PIN
 
 CPU_LIMIT_PERCENT = 420         # 70% of 6 Cores
@@ -15,7 +15,6 @@ IMG = f"{BASE}/{VM_NAME}.qcow2"
 SEED = f"{BASE}/{VM_NAME}-seed.iso"
 MARK = os.path.expanduser("~/.idxvm.installed")
 
-# Check if this is a fresh install or a resume
 IS_EXISTING_VM = os.path.exists(IMG)
 
 os.environ["PATH"] = os.path.expanduser("~/.nix-profile/bin") + ":" + os.environ.get("PATH", "")
@@ -39,6 +38,7 @@ if not os.path.exists(IMG):
     print(f"⬇️ Downloading Debian 12...")
     sh(f"wget -c -O {IMG}.tmp https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2")
     os.rename(f"{IMG}.tmp", IMG)
+    print("🔧 Resizing disk to 10G...")
     sh(f"qemu-img resize {IMG} {DISK_SIZE}")
 
 # 3. CLOUD-INIT
@@ -64,11 +64,6 @@ packages:
   - xrandr
   - curl
   - wget
-  - git
-  - nano
-  - unzip
-  - zip
-  - build-essential
   - xclip
   - chromium
   - python3-psutil
@@ -102,7 +97,6 @@ write_files:
       fi
 
       echo "4. Registering with PIN {CRD_PIN}..."
-      # Use eval to execute the pasted command with the PIN appended
       eval "$CRD_CMD --pin={CRD_PIN}"
       
       echo "---------------------------------------------"
@@ -114,11 +108,6 @@ runcmd:
   - apt install -y ./chrome-remote-desktop_current_amd64.deb
   - rm chrome-remote-desktop_current_amd64.deb
   - bash -c 'echo "exec /etc/X11/Xsession /usr/bin/xfce4-session" > /etc/chrome-remote-desktop-session'
-  - mkdir -p /etc/apt/keyrings
-  - curl -fsSL https://us-central1-apt.pkg.dev/doc/repo-signing-key.gpg | gpg --dearmor --yes -o /etc/apt/keyrings/antigravity-repo-key.gpg
-  - echo "deb [signed-by=/etc/apt/keyrings/antigravity-repo-key.gpg] https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev/ antigravity-debian main" > /etc/apt/sources.list.d/antigravity.list
-  - apt update
-  - apt install -y antigravity
   - systemctl set-default graphical.target
   - reboot
 """)
@@ -145,7 +134,7 @@ sh(
 )
 threading.Thread(target=limit_cpu, daemon=True).start()
 
-# 5. SMART INSTRUCTIONS
+# 5. INSTRUCTIONS
 print("⏳ Waiting for VM connectivity (This will take 3-5 mins)...")
 while subprocess.call("ssh -o ConnectTimeout=2 -o StrictHostKeyChecking=no -p 2222 user@localhost 'echo ok' >/dev/null 2>&1", shell=True) != 0:
     time.sleep(2)
@@ -163,7 +152,8 @@ else:
     print("1. Go to: https://remotedesktop.google.com/headless")
     print("2. Click Begin -> Next -> Authorize -> Copy 'Debian Linux' code.")
     print("3. Run this command here:")
-    print(f"   ssh -o StrictHostKeyChecking=no -p 2222 user@localhost setup-crd")
+    print(f"   ssh -o StrictHostKeyChecking=no -p 2222 user@localhost")
     print("   (Password: password)")
+    print("4. Inside the VM, type: setup-crd")
 print("="*50)
 while True: time.sleep(3600)
