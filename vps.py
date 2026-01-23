@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-import os, subprocess, time, threading, sys
+import os, subprocess, time, threading
 
 # --- CONFIGURATION ---
-VM_NAME = "debian12-chrome-v13"
-VM_RAM = "8192"                 # 8GB RAM (High Performance)
+VM_NAME = "debian12-chrome-v14"
+VM_RAM = "6144"                 # 6GB RAM (Safe & Fast)
 VM_CORES = "6"                  # 6 Cores
-DISK_SIZE = "10G"               # 10GB Disk
+DISK_SIZE = "15G"               # 15GB Disk
 CRD_PIN = "121212"              # PIN
 
 CPU_LIMIT_PERCENT = 450         # 75% of 6 Cores
@@ -38,7 +38,7 @@ if not os.path.exists(IMG):
     print(f"⬇️ Downloading Debian 12...")
     sh(f"wget -c -O {IMG}.tmp https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2")
     os.rename(f"{IMG}.tmp", IMG)
-    print("🔧 Resizing disk to 10G...")
+    print("🔧 Resizing disk to 15G...")
     sh(f"qemu-img resize {IMG} {DISK_SIZE}")
 
 # 3. CLOUD-INIT
@@ -58,26 +58,16 @@ chpasswd:
   expire: false
 package_update: true
 packages:
-  # System Utilities
-  - haveged
-  - qemu-guest-agent
-  # Desktop
+  # MINIMAL INSTALL FOR FAST BOOT
   - xfce4
   - xfce4-goodies
   - lightdm
   - dbus-x11
   - xbase-clients
   - x11-xserver-utils
-  # Browsers
   - chromium
-  # Tools
   - curl
   - wget
-  - git
-  - nano
-  - unzip
-  - zip
-  - build-essential
   - xclip
   - python3-psutil
 
@@ -89,6 +79,38 @@ write_files:
       xrandr --newmode "1920x1080_60.00" 173.00 1920 2048 2248 2576 1080 1083 1088 1120 -hsync +vsync
       xrandr --addmode Virtual-1 1920x1080_60.00
       xrandr -s 1920x1080
+
+  - path: /usr/local/bin/install-apps
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      echo "------------------------------------------------"
+      echo "📦 INSTALLING HEAVY APPS (Chrome + Antigravity)"
+      echo "------------------------------------------------"
+      
+      # 1. Antigravity
+      echo ">> Installing Antigravity..."
+      sudo mkdir -p /etc/apt/keyrings
+      curl -fsSL https://us-central1-apt.pkg.dev/doc/repo-signing-key.gpg | sudo gpg --dearmor --yes -o /etc/apt/keyrings/antigravity-repo-key.gpg
+      echo "deb [signed-by=/etc/apt/keyrings/antigravity-repo-key.gpg] https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev/ antigravity-debian main" | sudo tee /etc/apt/sources.list.d/antigravity.list > /dev/null
+      sudo apt update
+      sudo apt install -y antigravity
+
+      # 2. Google Chrome
+      echo ">> Installing Google Chrome..."
+      wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+      sudo apt install -y ./google-chrome-stable_current_amd64.deb
+      rm google-chrome-stable_current_amd64.deb
+      
+      # 3. Create Shortcuts
+      echo ">> Creating Shortcuts..."
+      mkdir -p /home/user/Desktop
+      echo '[Desktop Entry]\nVersion=1.0\nType=Application\nName=Antigravity\nExec=xfce4-terminal -e "antigravity"\nIcon=utilities-terminal\nTerminal=false\nStartupNotify=false' > /home/user/Desktop/antigravity.desktop
+      echo '[Desktop Entry]\nVersion=1.0\nType=Application\nName=Google Chrome\nExec=google-chrome-stable\nIcon=google-chrome\nTerminal=false\nStartupNotify=true' > /home/user/Desktop/google-chrome.desktop
+      chmod +x /home/user/Desktop/*.desktop
+      
+      echo "✅ DONE! All apps installed."
+      echo "------------------------------------------------"
 
   - path: /usr/local/bin/setup-crd
     permissions: '0755'
@@ -145,51 +167,20 @@ write_files:
       echo "---------------------------------------------"
       echo "✅ SUCCESS! Go to https://remotedesktop.google.com/access"
       echo "---------------------------------------------"
+      echo "👉 NOW RUN: 'install-apps' to get Chrome & Antigravity"
 
 runcmd:
-  # 1. Swap File (Stability)
+  # 1. Swap File
   - fallocate -l 4G /swapfile
   - chmod 600 /swapfile
   - mkswap /swapfile
   - swapon /swapfile
   - echo '/swapfile none swap sw 0 0' >> /etc/fstab
 
-  # 2. ANTIGRAVITY (Official Instructions)
-  - mkdir -p /etc/apt/keyrings
-  - curl -fsSL https://us-central1-apt.pkg.dev/doc/repo-signing-key.gpg | gpg --dearmor --yes -o /etc/apt/keyrings/antigravity-repo-key.gpg
-  - echo "deb [signed-by=/etc/apt/keyrings/antigravity-repo-key.gpg] https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev/ antigravity-debian main" | tee /etc/apt/sources.list.d/antigravity.list > /dev/null
-  - apt update
-  - apt install -y antigravity
-
-  # 3. GOOGLE CHROME (Main) & CRD
-  - wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-  - apt install -y ./google-chrome-stable_current_amd64.deb
-  - rm google-chrome-stable_current_amd64.deb
-  - wget https://dl.google.com/linux/direct/chrome-remote-desktop_current_amd64.deb
-  - apt install -y ./chrome-remote-desktop_current_amd64.deb
-  - rm chrome-remote-desktop_current_amd64.deb
-  
-  # 4. Create Desktop Shortcuts
-  - mkdir -p /home/user/Desktop
-  - chown user:user /home/user/Desktop
-  
-  # Shortcut: Antigravity
-  - echo '[Desktop Entry]\nVersion=1.0\nType=Application\nName=Antigravity\nExec=xfce4-terminal -e "antigravity"\nIcon=utilities-terminal\nTerminal=false\nStartupNotify=false' > /home/user/Desktop/antigravity.desktop
-  
-  # Shortcut: Google Chrome
-  - echo '[Desktop Entry]\nVersion=1.0\nType=Application\nName=Google Chrome\nExec=google-chrome-stable\nIcon=google-chrome\nTerminal=false\nStartupNotify=true' > /home/user/Desktop/google-chrome.desktop
-  
-  # Shortcut: Chromium
-  - echo '[Desktop Entry]\nVersion=1.0\nType=Application\nName=Chromium Backup\nExec=chromium\nIcon=chromium\nTerminal=false\nStartupNotify=true' > /home/user/Desktop/chromium.desktop
-  
-  - chmod +x /home/user/Desktop/*.desktop
-  - chown user:user /home/user/Desktop/*.desktop
-
-  # 5. Final Config
+  # 2. Final Config
   - echo "exec /usr/bin/xfce4-session" > /etc/chrome-remote-desktop-session
   - systemctl unmask chrome-remote-desktop.service
   - systemctl enable chrome-remote-desktop.service
-  
   - systemctl enable lightdm
   - systemctl set-default graphical.target
   - reboot
@@ -200,9 +191,7 @@ runcmd:
 
 # 4. CPU LIMIT & RUN
 def limit_cpu():
-    # Wait 2 minutes for VM to finish booting before limiting CPU
-    # This prevents the "Freezing" issue on startup
-    time.sleep(120)
+    time.sleep(60) # Wait 1 min for boot
     while True:
         for pid in subprocess.getoutput("pgrep -f qemu-system-x86_64").split():
             subprocess.run(f"cpulimit -p {pid} -l {CPU_LIMIT_PERCENT} -b >/dev/null 2>&1", shell=True)
@@ -210,7 +199,7 @@ def limit_cpu():
 
 sh("pkill -f qemu-system-x86_64 >/dev/null 2>&1")
 
-print(f"🚀 Booting {VM_NAME} (8GB RAM)...")
+print(f"🚀 Booting {VM_NAME} (6GB RAM)...")
 sh(
     f"qemu-system-x86_64 -enable-kvm -m {VM_RAM} -smp {VM_CORES} -cpu host "
     f"-drive file={IMG},format=qcow2,if=virtio "
@@ -221,17 +210,11 @@ sh(
 threading.Thread(target=limit_cpu, daemon=True).start()
 
 # 5. INSTRUCTIONS
-print("⏳ Waiting for VM connectivity...")
-
-# Crash Detector Loop
+print("⏳ Waiting for VM connectivity (Should be FAST now)...")
 while True:
-    # Check if process is still alive
     if subprocess.call("pgrep -f qemu-system-x86_64 >/dev/null", shell=True) != 0:
-        print("\n❌ CRITICAL ERROR: VM Process Died!")
-        print("   This means the system killed it due to RAM usage.")
+        print("\n❌ CRITICAL ERROR: VM Process Died! (Try lowering RAM)")
         sys.exit(1)
-        
-    # Check connectivity
     if subprocess.call("ssh -o ConnectTimeout=2 -o StrictHostKeyChecking=no -p 2222 user@localhost 'echo ok' >/dev/null 2>&1", shell=True) == 0:
         break
     time.sleep(2)
@@ -251,5 +234,8 @@ else:
     print("3. Run this command here:")
     print(f"   ssh -o StrictHostKeyChecking=no -p 2222 user@localhost setup-crd")
     print("   (Password: password)")
+    print("")
+    print("🔥 IMPORTANT: After setup, run this to get Chrome & Antigravity:")
+    print("   install-apps")
 print("="*50)
 while True: time.sleep(3600)
