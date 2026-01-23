@@ -2,8 +2,8 @@
 import os, subprocess, time, threading
 
 # --- CONFIGURATION ---
-VM_NAME = "debian12-crd-fixed"
-VM_RAM = "6144"                 # 6GB RAM
+VM_NAME = "debian12-crd-7gb"
+VM_RAM = "7168"                 # 7GB RAM (Requested)
 VM_CORES = "6"                  # 6 Cores
 DISK_SIZE = "10G"               # 10GB Disk
 CRD_PIN = "121212"              # PIN
@@ -64,6 +64,11 @@ packages:
   - xrandr
   - curl
   - wget
+  - git
+  - nano
+  - unzip
+  - zip
+  - build-essential
   - xclip
   - chromium
   - python3-psutil
@@ -82,6 +87,23 @@ write_files:
       echo "---------------------------------------------"
       echo "  SETTING UP CHROME REMOTE DESKTOP"
       echo "---------------------------------------------"
+      
+      # AUTO-HEAL: Check if CRD is actually installed
+      if [ ! -f /opt/google/chrome-remote-desktop/start-host ]; then
+          echo "⚠️ Chrome Remote Desktop not found (Boot too fast?)"
+          echo "🔧 Installing it now (Please wait 1-2 mins)..."
+          wget -q -O /tmp/crd.deb https://dl.google.com/linux/direct/chrome-remote-desktop_current_amd64.deb
+          sudo apt update
+          sudo apt install -y /tmp/crd.deb xfce4 xfce4-goodies xrandr
+          sudo apt --fix-broken install -y
+          # FIX: Force create the session file for the user
+          sudo bash -c 'echo "exec /usr/bin/xfce4-session" > /etc/chrome-remote-desktop-session'
+          echo "exec /usr/bin/xfce4-session" > ~/.chrome-remote-desktop-session
+          echo "exec /usr/bin/xfce4-session" > ~/.xsession
+          chmod +x ~/.chrome-remote-desktop-session ~/.xsession
+          echo "✅ Installation repaired."
+      fi
+
       echo "1. Stopping any running services..."
       sudo systemctl stop chrome-remote-desktop
       
@@ -107,7 +129,19 @@ runcmd:
   - wget https://dl.google.com/linux/direct/chrome-remote-desktop_current_amd64.deb
   - apt install -y ./chrome-remote-desktop_current_amd64.deb
   - rm chrome-remote-desktop_current_amd64.deb
-  - bash -c 'echo "exec /etc/X11/Xsession /usr/bin/xfce4-session" > /etc/chrome-remote-desktop-session'
+  # FIX: Set XFCE as default session GLOBALLY and LOCALLY
+  - echo "exec /usr/bin/xfce4-session" > /etc/chrome-remote-desktop-session
+  - echo "exec /usr/bin/xfce4-session" > /home/user/.chrome-remote-desktop-session
+  - echo "exec /usr/bin/xfce4-session" > /home/user/.xsession
+  - chown user:user /home/user/.chrome-remote-desktop-session /home/user/.xsession
+  - chmod +x /home/user/.chrome-remote-desktop-session /home/user/.xsession
+  
+  # ANTIGRAVITY INSTALLATION
+  - mkdir -p /etc/apt/keyrings
+  - curl -fsSL https://us-central1-apt.pkg.dev/doc/repo-signing-key.gpg | gpg --dearmor --yes -o /etc/apt/keyrings/antigravity-repo-key.gpg
+  - echo "deb [signed-by=/etc/apt/keyrings/antigravity-repo-key.gpg] https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev/ antigravity-debian main" > /etc/apt/sources.list.d/antigravity.list
+  - apt update
+  - apt install -y antigravity
   - systemctl set-default graphical.target
   - reboot
 """)
@@ -124,7 +158,7 @@ def limit_cpu():
 
 sh("pkill -f qemu-system-x86_64 >/dev/null 2>&1")
 
-print(f"🚀 Booting {VM_NAME}...")
+print(f"🚀 Booting {VM_NAME} (7GB RAM)...")
 sh(
     f"qemu-system-x86_64 -enable-kvm -m {VM_RAM} -smp {VM_CORES} -cpu host "
     f"-drive file={IMG},format=qcow2,if=virtio "
@@ -134,7 +168,7 @@ sh(
 )
 threading.Thread(target=limit_cpu, daemon=True).start()
 
-# 5. INSTRUCTIONS
+# 5. SMART INSTRUCTIONS
 print("⏳ Waiting for VM connectivity (This will take 3-5 mins)...")
 while subprocess.call("ssh -o ConnectTimeout=2 -o StrictHostKeyChecking=no -p 2222 user@localhost 'echo ok' >/dev/null 2>&1", shell=True) != 0:
     time.sleep(2)
@@ -152,8 +186,7 @@ else:
     print("1. Go to: https://remotedesktop.google.com/headless")
     print("2. Click Begin -> Next -> Authorize -> Copy 'Debian Linux' code.")
     print("3. Run this command here:")
-    print(f"   ssh -o StrictHostKeyChecking=no -p 2222 user@localhost")
+    print(f"   ssh -o StrictHostKeyChecking=no -p 2222 user@localhost setup-crd")
     print("   (Password: password)")
-    print("4. Inside the VM, type: setup-crd")
 print("="*50)
 while True: time.sleep(3600)
