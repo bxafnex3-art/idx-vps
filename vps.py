@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-import os, subprocess, time, threading
+import os, subprocess, time, threading, sys
 
 # --- CONFIGURATION ---
-VM_NAME = "debian12-chrome-v11"
+VM_NAME = "debian12-chrome-v13"
 VM_RAM = "8192"                 # 8GB RAM (High Performance)
 VM_CORES = "6"                  # 6 Cores
-DISK_SIZE = "10G"               # 15GB Disk (Increased for multiple browsers)
+DISK_SIZE = "10G"               # 10GB Disk
 CRD_PIN = "121212"              # PIN
 
-CPU_LIMIT_PERCENT = 420         # 70% of 6 Cores
+CPU_LIMIT_PERCENT = 450         # 75% of 6 Cores
 
 BASE = os.path.expanduser("~/idxvm")
 IMG = f"{BASE}/{VM_NAME}.qcow2"
@@ -38,7 +38,7 @@ if not os.path.exists(IMG):
     print(f"⬇️ Downloading Debian 12...")
     sh(f"wget -c -O {IMG}.tmp https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2")
     os.rename(f"{IMG}.tmp", IMG)
-    print("🔧 Resizing disk to 15G...")
+    print("🔧 Resizing disk to 10G...")
     sh(f"qemu-img resize {IMG} {DISK_SIZE}")
 
 # 3. CLOUD-INIT
@@ -58,10 +58,10 @@ chpasswd:
   expire: false
 package_update: true
 packages:
-  # System Utilities (Fixes freezing)
+  # System Utilities
   - haveged
   - qemu-guest-agent
-  # Desktop Environment
+  # Desktop
   - xfce4
   - xfce4-goodies
   - lightdm
@@ -200,6 +200,9 @@ runcmd:
 
 # 4. CPU LIMIT & RUN
 def limit_cpu():
+    # Wait 2 minutes for VM to finish booting before limiting CPU
+    # This prevents the "Freezing" issue on startup
+    time.sleep(120)
     while True:
         for pid in subprocess.getoutput("pgrep -f qemu-system-x86_64").split():
             subprocess.run(f"cpulimit -p {pid} -l {CPU_LIMIT_PERCENT} -b >/dev/null 2>&1", shell=True)
@@ -218,8 +221,19 @@ sh(
 threading.Thread(target=limit_cpu, daemon=True).start()
 
 # 5. INSTRUCTIONS
-print("⏳ Waiting for VM connectivity (This WILL take 5-8 mins due to big install)...")
-while subprocess.call("ssh -o ConnectTimeout=2 -o StrictHostKeyChecking=no -p 2222 user@localhost 'echo ok' >/dev/null 2>&1", shell=True) != 0:
+print("⏳ Waiting for VM connectivity...")
+
+# Crash Detector Loop
+while True:
+    # Check if process is still alive
+    if subprocess.call("pgrep -f qemu-system-x86_64 >/dev/null", shell=True) != 0:
+        print("\n❌ CRITICAL ERROR: VM Process Died!")
+        print("   This means the system killed it due to RAM usage.")
+        sys.exit(1)
+        
+    # Check connectivity
+    if subprocess.call("ssh -o ConnectTimeout=2 -o StrictHostKeyChecking=no -p 2222 user@localhost 'echo ok' >/dev/null 2>&1", shell=True) == 0:
+        break
     time.sleep(2)
 
 print("\n" + "="*50)
