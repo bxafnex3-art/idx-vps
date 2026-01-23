@@ -2,13 +2,13 @@
 import os, subprocess, time, threading
 
 # --- CONFIGURATION ---
-VM_NAME = "debian12-crd-final"
-VM_RAM = "6144"         # Set to 6GB (Safer than 7GB to avoid crashes)
-VM_CORES = "6"
-DISK_SIZE = "10G"
-CRD_PIN = "121212"
+VM_NAME = "debian12-crd-fixed"  # Changed name to force fresh install
+VM_RAM = "6144"                 # 6GB RAM
+VM_CORES = "6"                  # 6 Cores
+DISK_SIZE = "10G"               # 10GB Disk (Requested)
+CRD_PIN = "121212"              # PIN
 
-CPU_LIMIT_PERCENT = 420 # 70% of 6 Cores
+CPU_LIMIT_PERCENT = 420         # 70% of 6 Cores
 
 BASE = os.path.expanduser("~/idxvm")
 IMG = f"{BASE}/{VM_NAME}.qcow2"
@@ -84,12 +84,31 @@ write_files:
     permissions: '0755'
     content: |
       #!/bin/bash
-      echo "Cleaning up old session..."
-      systemctl stop chrome-remote-desktop
+      echo "---------------------------------------------"
+      echo "  SETTING UP CHROME REMOTE DESKTOP"
+      echo "---------------------------------------------"
+      echo "1. Stopping any running services..."
+      sudo systemctl stop chrome-remote-desktop
+      
+      echo "2. Cleaning old configs..."
       rm -rf ~/.config/chrome-remote-desktop
-      read -p "Paste Google Auth Command: " CRD_CMD
+      
+      echo "3. Paste the 'Debian Linux' command from Google now:"
+      read CRD_CMD
+      
+      if [ -z "$CRD_CMD" ]; then
+        echo "❌ Error: You didn't paste anything!"
+        exit 1
+      fi
+
+      echo "4. Registering with PIN {CRD_PIN}..."
+      # Use eval to execute the pasted command with the PIN appended
       eval "$CRD_CMD --pin={CRD_PIN}"
-      echo "✅ Registered! Access at https://remotedesktop.google.com/access"
+      
+      echo "---------------------------------------------"
+      echo "✅ SUCCESS! Go to https://remotedesktop.google.com/access"
+      echo "---------------------------------------------"
+
 runcmd:
   - wget https://dl.google.com/linux/direct/chrome-remote-desktop_current_amd64.deb
   - apt install -y ./chrome-remote-desktop_current_amd64.deb
