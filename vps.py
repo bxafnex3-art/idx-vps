@@ -2,10 +2,10 @@
 import os, subprocess, time, threading
 
 # --- CONFIGURATION ---
-VM_NAME = "debian12-chrome-v9"
-VM_RAM = "7168"                 # 7GB RAM
+VM_NAME = "debian12-chrome-v11"
+VM_RAM = "8192"                 # 8GB RAM (High Performance)
 VM_CORES = "6"                  # 6 Cores
-DISK_SIZE = "10G"               # 10GB Disk
+DISK_SIZE = "10G"               # 15GB Disk (Increased for multiple browsers)
 CRD_PIN = "121212"              # PIN
 
 CPU_LIMIT_PERCENT = 420         # 70% of 6 Cores
@@ -38,7 +38,7 @@ if not os.path.exists(IMG):
     print(f"⬇️ Downloading Debian 12...")
     sh(f"wget -c -O {IMG}.tmp https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2")
     os.rename(f"{IMG}.tmp", IMG)
-    print("🔧 Resizing disk to 10G...")
+    print("🔧 Resizing disk to 15G...")
     sh(f"qemu-img resize {IMG} {DISK_SIZE}")
 
 # 3. CLOUD-INIT
@@ -58,6 +58,9 @@ chpasswd:
   expire: false
 package_update: true
 packages:
+  # System Utilities (Fixes freezing)
+  - haveged
+  - qemu-guest-agent
   # Desktop Environment
   - xfce4
   - xfce4-goodies
@@ -65,7 +68,7 @@ packages:
   - dbus-x11
   - xbase-clients
   - x11-xserver-utils
-  # Browsers (Chromium as backup)
+  # Browsers
   - chromium
   # Tools
   - curl
@@ -144,7 +147,7 @@ write_files:
       echo "---------------------------------------------"
 
 runcmd:
-  # 1. Swap File
+  # 1. Swap File (Stability)
   - fallocate -l 4G /swapfile
   - chmod 600 /swapfile
   - mkswap /swapfile
@@ -173,10 +176,10 @@ runcmd:
   # Shortcut: Antigravity
   - echo '[Desktop Entry]\nVersion=1.0\nType=Application\nName=Antigravity\nExec=xfce4-terminal -e "antigravity"\nIcon=utilities-terminal\nTerminal=false\nStartupNotify=false' > /home/user/Desktop/antigravity.desktop
   
-  # Shortcut: Google Chrome (Main)
+  # Shortcut: Google Chrome
   - echo '[Desktop Entry]\nVersion=1.0\nType=Application\nName=Google Chrome\nExec=google-chrome-stable\nIcon=google-chrome\nTerminal=false\nStartupNotify=true' > /home/user/Desktop/google-chrome.desktop
   
-  # Shortcut: Chromium (Backup)
+  # Shortcut: Chromium
   - echo '[Desktop Entry]\nVersion=1.0\nType=Application\nName=Chromium Backup\nExec=chromium\nIcon=chromium\nTerminal=false\nStartupNotify=true' > /home/user/Desktop/chromium.desktop
   
   - chmod +x /home/user/Desktop/*.desktop
@@ -184,7 +187,6 @@ runcmd:
 
   # 5. Final Config
   - echo "exec /usr/bin/xfce4-session" > /etc/chrome-remote-desktop-session
-  # Auto-unmask service for boot
   - systemctl unmask chrome-remote-desktop.service
   - systemctl enable chrome-remote-desktop.service
   
@@ -205,7 +207,7 @@ def limit_cpu():
 
 sh("pkill -f qemu-system-x86_64 >/dev/null 2>&1")
 
-print(f"🚀 Booting {VM_NAME} (7GB RAM)...")
+print(f"🚀 Booting {VM_NAME} (8GB RAM)...")
 sh(
     f"qemu-system-x86_64 -enable-kvm -m {VM_RAM} -smp {VM_CORES} -cpu host "
     f"-drive file={IMG},format=qcow2,if=virtio "
@@ -216,7 +218,7 @@ sh(
 threading.Thread(target=limit_cpu, daemon=True).start()
 
 # 5. INSTRUCTIONS
-print("⏳ Waiting for VM connectivity...")
+print("⏳ Waiting for VM connectivity (This WILL take 5-8 mins due to big install)...")
 while subprocess.call("ssh -o ConnectTimeout=2 -o StrictHostKeyChecking=no -p 2222 user@localhost 'echo ok' >/dev/null 2>&1", shell=True) != 0:
     time.sleep(2)
 
