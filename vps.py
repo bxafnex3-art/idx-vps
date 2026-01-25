@@ -11,7 +11,7 @@ VM_RAM = "6144"                 # 6GB RAM (Safe Zone)
 
 VM_CORES = "6"                  # 6 Cores
 
-DISK_SIZE = "15G"               # 15GB Disk
+DISK_SIZE = "10G"               # 15GB Disk
 
 CRD_PIN = "121212"              # PIN
 
