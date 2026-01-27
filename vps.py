@@ -6,7 +6,7 @@ import os, subprocess, time, threading, sys
 
 VM_NAME = "debian12-fastboot-v15"
 
-VM_RAM = "6144"                 # 6GB RAM (Safe Zone)
+VM_RAM = "8142"                 # 6GB RAM (Safe Zone)
 VM_CORES = "6"                  # 6 Cores
 DISK_SIZE = "10G"               # 10GB Disk (resized to this)
 CRD_PIN = "121212"              # PIN
