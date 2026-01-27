@@ -1,3 +1,4 @@
+
 bash -c '
 # 1) Ensure python exists in IDX
 if [ ! -x "$HOME/.nix-profile/bin/python3" ]; then
