@@ -8,7 +8,7 @@ VM_NAME = "debian12-fastboot-v15"
 
 VM_RAM = "8142"                 # 6GB RAM (Safe Zone)
 VM_CORES = "6"                  # 6 Cores
-DISK_SIZE = "10G"               # 10GB Disk (resized to this)
+DISK_SIZE = "12G"               # 10GB Disk (resized to this)
 CRD_PIN = "121212"              # PIN
 
 # Script to run AFTER the VM boots
